@@ -1,43 +1,4 @@
 #!/usr/bin/env python3.7
-'''
-
-try and fix background/foreground issue
-
-    Traceback (most recent call last):
-      File "/usr/lib/python3.7/multiprocessing/process.py", line 297, in _bootstrap
-        self.run()
-      File "/usr/lib/python3.7/multiprocessing/process.py", line 99, in run
-        self._target(*self._args, **self._kwargs)
-      File "/mnt/s1/leak/bin/lib/db.py", line 389, in _add_batches
-        unique_accounts += mthread.result()
-      File "/usr/lib/python3.7/concurrent/futures/_base.py", line 425, in result
-        return self.__get_result()
-      File "/usr/lib/python3.7/concurrent/futures/_base.py", line 384, in __get_result
-        raise self._exception
-      File "/usr/lib/python3.7/concurrent/futures/thread.py", line 57, in run
-        result = self.fn(*self.args, **self.kwargs)
-      File "/mnt/s1/leak/bin/lib/db.py", line 419, in _mongo_add_batch
-        _mongo.counters.update_one({'collection': 'sources'}, {'$inc': {str(source_id): len(mongo_batch)}}, upsert=True)
-      File "/home/user/.local/lib/python3.7/site-packages/pymongo/collection.py", line 995, in update_one
-        session=session),
-      File "/home/user/.local/lib/python3.7/site-packages/pymongo/collection.py", line 851, in _update_retryable
-        _update, session)
-      File "/home/user/.local/lib/python3.7/site-packages/pymongo/mongo_client.py", line 1248, in _retryable_write
-        return self._retry_with_session(retryable, func, s, None)
-      File "/home/user/.local/lib/python3.7/site-packages/pymongo/mongo_client.py", line 1201, in _retry_with_session
-        return func(session, sock_info, retryable)
-      File "/home/user/.local/lib/python3.7/site-packages/pymongo/collection.py", line 847, in _update
-        retryable_write=retryable_write)
-      File "/home/user/.local/lib/python3.7/site-packages/pymongo/collection.py", line 817, in _update
-        retryable_write=retryable_write).copy()
-      File "/home/user/.local/lib/python3.7/site-packages/pymongo/pool.py", line 584, in command
-        self._raise_connection_failure(error)
-      File "/home/user/.local/lib/python3.7/site-packages/pymongo/pool.py", line 743, in _raise_connection_failure
-        _raise_connection_failure(self.address, error)
-      File "/home/user/.local/lib/python3.7/site-packages/pymongo/pool.py", line 283, in _raise_connection_failure
-        raise AutoReconnect(msg)
-    pymongo.errors.AutoReconnect: localhost:27017: [Errno 32] Broken pipe
-'''
 
 import copy
 import time
@@ -45,44 +6,30 @@ import queue
 import redis
 import pymongo
 from .leak import *
+import elasticsearch
 from time import sleep
 import multiprocessing
 from hashlib import sha1
 from pathlib import Path
 import concurrent.futures
 from subprocess import run, PIPE
+from elasticsearch import helpers
 
 
 class DB():
 
     def __init__(self):
 
-        ### MONGO ###
-        self.client = pymongo.MongoClient()
-        # database
-        self.db = self.client['dump']
-        # accounts
-        self.accounts = self.db.accounts
+        ### ELASTIC ###
+        self.es     = elasticsearch.Elasticsearch()
 
-        #self.accounts.create_index([('id', pymongo.ASCENDING)])
-        #self.accounts.create_index([('username', pymongo.ASCENDING)], sparse=True, background=True)
-        #self.accounts.create_index([('domain', pymongo.ASCENDING)], sparse=True, background=True)
-        #self.accounts.create_index([('password', pymongo.ASCENDING), ('username', pymongo.ASCENDING)], sparse=True, background=True)
-        #self.accounts.create_index([('email', pymongo.ASCENDING), ('password', pymongo.ASCENDING)], sparse=True, background=True)
-
-        # "warm up" the indexes (load them into memory)
-        # roughly equivalent to the "touch" db command in mmap
-        # https://grokbase.com/t/gg/mongodb-user/154qhs7402/warming-up-index-data-is-wiredtiger
-        # index_char_range = ['a','b','c','d','e','f','g','h','i','j','k','l','m','n','o','p','q','r','s','t','u','v','w','x','y','z','0','1','2','3','4','5','6','7','8','9']
-        # self.accounts.find({'email': {'$in': index_char_range }, 'password': {'$in': index_char_range } }).count()
-        # self.accounts.find({'domain': {'$in': index_char_range } }).count()
-        # self.accounts.find({'password': {'$in': index_char_range }, 'username': {'$in': index_char_range } }).count()
-        # self.accounts.find({'username': {'$in': index_char_range } }).count()
-        # self.db.command('touch', 'accounts', index=True)
-        # sources
-        self.sources = self.db.sources
-        # counters
-        self.counters = self.db.counters
+        # create indexes (basically tables)
+        if not self.es.indices.exists('accounts'):
+            self.es.indices.create('accounts')
+        if not self.es.indices.exists('sources'):
+            self.es.indices.create('sources')
+        if not self.es.indices.exists('counters'):
+            self.es.indices.create('counters')
 
         ### REDIS ###
         self.redis = redis.StrictRedis()
@@ -152,7 +99,7 @@ class DB():
 
 
 
-    def add_leak(self, leak, num_threads=2):
+    def add_leak(self, leak, num_threads=4, chunk_size=500):
         '''
         benchmarks for adding 1M accounts:
             (best average: ~62,500 per second)
@@ -205,49 +152,26 @@ class DB():
         try:
 
             errprint('[+] Adding leak')
-            errprint('[+] Using {} threads'.format(num_threads))
+            errprint('     - {} threads'.format(num_threads))
+            errprint('     - chunk size: {}'.format(chunk_size))
 
             try:
                 self.leak_size = len(leak)
             except TypeError:
                 self.leak_size = 0
 
-            source_id = self.add_source(leak.source)
             start_time = time.time()
-            batch_queue = multiprocessing.Queue(num_threads*2)
-            result_queue = multiprocessing.Queue(num_threads)
 
-            pool = []
-            #pipes = []
-            for i in range(num_threads):
-                #receiver, sender = multiprocessing.Pipe(duplex=False)
-                # errprint('starting process #{}'.format(i))
-                p = multiprocessing.Process(target=self._add_batches, args=(batch_queue, result_queue, source_id))
-                pool.append(p)
-                p.start()
-                #pipes.append(sender)
+            bulk_stream = self._bulk_account_generator()
+            for success, result in helpers.parallel_bulk(client=es, actions=bulk_stream, thread_count=num_threads, chunk_size=chunk_size):
+                self.leak_overall += 1
+                if success:
+                    if result:
+                        if result['index']['result'] == 'created':
+                            self.leak_unique += 1
+                if self.leak_overall % chunk_size == 0:
+                    errprint('\r[+] {:,}{}  '.format(self.leak_overall, (' ({:.3f})%'.format(self.leak_overall / self.leak_size * 100) if self.leak_size else '')), end='')
 
-            #i = 0
-            for batch in self._gen_batches(leak, source_id):
-                #pipes[i%num_threads].send(batch)
-                batch_queue.put(batch)
-                errprint('\r[+] {:,}{}  '.format(self.leak_overall, (' ({:.3f})%'.format(self.leak_overall / self.leak_size * 100) if self.leak_size else '')), end='')
-                #i += 1
-            errprint()
-
-            # sending shutdown signal to threads
-            for q in range(num_threads+1):
-                batch_queue.put(None)
-
-            for p in pool:
-                p.join()
-            
-            # retrieve counters from finished processes
-            while 1:
-                try:
-                    self.leak_unique += result_queue.get_nowait()
-                except queue.Empty:
-                    break
 
             end_time = time.time()
             time_elapsed = (end_time - start_time)
@@ -257,9 +181,6 @@ class DB():
                 errprint('[+] Unique Accounts: {:,} ({:.1f}%)'.format(self.leak_unique, ((self.leak_unique/self.leak_overall)*100)))
                 errprint('[+] Time Elapsed: {} hours, {} minutes, {} seconds\n'.format(int(time_elapsed/3600), int((time_elapsed%3600)/60), int((time_elapsed%3600)%60)))
 
-        except KeyboardInterrupt:
-            [p.terminate() for p in pool]
-            raise KeyboardInterrupt
         finally:
             # reset leak counters
             self.leak_unique = 0
@@ -314,25 +235,26 @@ class DB():
     def add_source(self, source):
 
         source_doc = source.document()
+        source_id = 1
 
-        if self.sources.find_one(source_doc) is not None:
+        # check if source already exists
+        if self._elastic_exact_match(source_doc, index='sources', doc_type='source'):
             assert False, 'Source already exists'
         else:
-            d = self.counters.find_one({'collection': 'sources'})
-            id_counter = (d['id_counter'] if d else 0)     
-            while 1:       
+            # source id = the number of sources in the index + 1
+            source_id = self.es.count(index='sources')['count'] + 1
 
+            # loop until there's a unique one
+            while 1:
                 try:
-                    id_counter += 1
-                    source_doc['_id'] = id_counter
-                    self.sources.insert_one(source_doc)
+                    self.es.create(index='sources', doc_type='source', id=source_id, body=source_doc)
                     break
-                except pymongo.errors.DuplicateKeyError:
+
+                except elasticsearch.exceptions.ConflictError:
+                    source_id += 1
                     continue
 
-            self.counters.update_one({'collection': 'sources'}, {'$set': {'id_counter': id_counter}}, upsert=True)
-
-        return id_counter
+        return source_id
 
 
     def show_stats(self, accounts=False, counters=False, sources=True, db=False):
@@ -404,23 +326,18 @@ class DB():
             return None
 
 
-    def _gen_batches(self, leak, source_id, batch_size=10000):
 
-        batch = []
+    def _bulk_account_generator(self, leak):
+
         for account in leak:
+            account_id = account.to_object_id()
             account_doc = account.document()
 
-            if account_doc is not None:
-                batch.append(account_doc)
-                self.leak_overall += 1
+            yield {'_index': 'accounts', '_type': 'account', '_id': account_id, '_source': account_doc}
+                
 
-            if batch and (self.leak_overall) % batch_size == 0:
-                #errprint('BATCH SIZE: {}'.format(len(batch)))
-                yield batch
-                batch = []
-            
-        if batch:
-            yield batch
+
+
 
 
     def _add_batches(self, batch_queue, result_queue, source_id):
@@ -456,6 +373,17 @@ class DB():
         result_queue.put(unique_accounts)
         errprint('[+] Worker finished')
 
+
+
+    def _elastic_exact_match(self, doc, index='accounts', doc_type='account'):
+
+        # construct query object
+        query_obj = {'query': {'bool': {'must': []}}}
+        for key, value in doc.items():
+            if value:
+                query_obj['query']['bool']['must'].append({'match': {key: value}})
+
+        return self.es.search(index=index, doc_type=doc_type, body=query_obj)['hits']
 
 
     @staticmethod

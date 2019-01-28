@@ -1,10 +1,11 @@
 #!/bin/bash
 
-. srv.conf
+. .env
 
 mongo_name="mongo_0"
 redis_name="redis_0"
 elast_name="elastic_0"
+kibana_name="kibana_0"
 
 usage()
 {
@@ -128,34 +129,6 @@ start_mongo()
 }
 
 
-start_elastic()
-{
-
-	if docker ps | grep -q "$elast_name"
-	then
-		printf '[i] Elasticsearch is already started\n'
-	else
-		printf '[+] Launching Elasticsearch\n'
-		docker rm "$elast_name" 2>/dev/null
-		docker pull docker.elastic.co/elasticsearch/elasticsearch:6.5.4
-		docker run --name "$elast_name" --detach --publish 127.0.0.1:9200:9200 \
-			--publish 127.0.0.1:9300:9300 -e 'discovery.type=single-node' \
-			--volume "$elast_dir:/usr/share/elasticsearch/data:delegated" \
-			elasticsearch:6.5.4
-		sleep 1
-		
-		if docker ps | grep -q "$elast_name"
-		then
-			printf '[+] Elasticsearch successfully started\n'
-		else
-			printf '[!] Failed to start Elasticsearch\n'
-			exit 1
-		fi
-	fi
-
-}
-
-
 start_redis()
 {
 
@@ -190,6 +163,7 @@ start_containers()
 
 	start_daemon
 	start_elastic
+	start_kibana
 	#start_mongo
 	#start_redis
 
@@ -204,10 +178,13 @@ stop_containers()
 
 	printf '[+] Gracefully stopping Redis\n'
 	docker stop -t 9999999 "$redis_name" >/dev/null 2>&1
+
+	printf '[+] Gracefully stopping Elasticsearch\n'
+	docker stop -t 9999999 "$elast_name" >/dev/null 2>&1
 	
 	while :
 	do
-		(docker ps | grep -q "$mongo_name\|$redis_name") || break
+		(docker ps | grep -q "$elast_name\|$mongo_name\|$redis_name") || break
 		sleep 1
 	done
 
@@ -322,7 +299,7 @@ create_dirs()
 	if [ ! -d "$elast_dir" ]
 	then
 		sudo mkdir -p "$elast_dir"
-		sudo chown 231000:231000 "$elast_dir"
+		sudo chown 232000:232000 "$elast_dir"
 		sudo chmod 770 "$elast_dir"
 	fi
 	#sudo rm -r "$db_dir/index"
@@ -368,9 +345,6 @@ do
 		-rs|--redis-shell|redis-shell)
 			redis_shell=true
 			;;
-		-es|--elastic-shell|elastic-shell)
-			elast_shell=true
-			;;
 		-m|-M|--mount|--mountpoint)
 			shift
 			mountpoint="$1"
@@ -400,14 +374,11 @@ elif [ -n "$redis_shell" ]
 then
 	start_containers
 	docker exec -it "$redis_name" bash
-elif [ -n "$elast_shell" ]
-then
-	start_containers
-	docker exec -it "$elast_name" bash
 elif [ -n "$do_kill" ]
 then
 	kill_dock
 elif [ -n "$do_start" ]
 then
-	start_containers
+	start_daemon
+	#start_containers
 fi
