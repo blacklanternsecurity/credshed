@@ -1,0 +1,44 @@
+version: '2'
+
+services:
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:6.5.4
+    volumes:
+      - $elast_dir:/usr/share/elasticsearch/data:delegated
+    user: 0:0
+    ports:
+      - "127.0.0.1:9200:9200"
+      - "127.0.0.1:9300:9300"
+    environment:
+      ES_JAVA_OPTS: "-Xmx30g -Xms30g"
+      discovery.type: single-node
+    networks:
+      - darkstash
+
+  kibana:
+    image: docker.elastic.co/kibana/kibana:6.5.4
+    environment:
+      server.name: kibana
+      server.host: "0"
+      elasticsearch.url: http://elasticsearch:9200
+    ports:
+      - "127.0.0.1:5601:5601"
+    networks:
+      - darkstash
+    depends_on:
+      - elasticsearch
+
+
+  redis:
+    image: redis
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - "$redis_dir:/data:delegated"
+    entrypoint: redis-server --maxmemory 5000000000 --maxmemory-policy allkeys-random
+
+networks:
+
+  darkstash:
+    driver: bridge
