@@ -60,7 +60,7 @@ class Account():
         doc = dict()
 
         try:
-            doc['_id'] = self.to_object_id()
+            #doc['_id'] = self.to_object_id()
             if not id_only:
                 if self.email:
                     doc['email'], doc['domain'] = self.email.decode(encoding='utf-8').split('@')[:2]

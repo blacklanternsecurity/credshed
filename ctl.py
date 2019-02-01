@@ -139,11 +139,13 @@ def main(options):
                 continue
 
             leak = Leak(q.source_name, q.source_hashtype, q.source_misc)
+
             # make sure source doesn't already exist
-            if db.sources.find_one(leak.source.document(misc=False)) is not None:
-                errprint('[!] Source already exists')
+            try:
+                db.add_source(leak.source)
+            except AssertionError as e:
+                errprint('[!] {}'.format(str(e)))
                 continue
-                #assert False, 'Source already exists'
 
             if options.no_deduplication:
                 leak.accounts = q.__iter__()
@@ -256,7 +258,7 @@ def main(options):
 if __name__ == '__main__':
 
     parser = argparse.ArgumentParser()
-    default_threads = cpu_count()
+    default_threads = int(cpu_count()/2)
 
     parser.add_argument('search',                       nargs='*',                      help='search term(s)')
     parser.add_argument('-a', '--add',      type=Path,  nargs='+',                      help='add file(s) to DB')

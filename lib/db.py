@@ -21,15 +21,66 @@ class DB():
     def __init__(self):
 
         ### ELASTIC ###
-        self.es     = elasticsearch.Elasticsearch()
+        self.es        = elasticsearch.Elasticsearch()
+        self.es_index  = elasticsearch.client.IndicesClient(self.es)
 
         # create indexes (basically tables)
         if not self.es.indices.exists('accounts'):
-            self.es.indices.create('accounts')
+            # 1M accounts:
+            #  - default compression:
+            #    - 48M file --> 317M db
+            #  - best_compression:
+            #    - 48M file -- > 299M db
+            self.es.indices.create('accounts', body={'codec': 'best_compression'})
         if not self.es.indices.exists('sources'):
             self.es.indices.create('sources')
         if not self.es.indices.exists('counters'):
             self.es.indices.create('counters')
+
+
+        # set up mappings
+        mappings = {
+            'properties':
+            {
+                'username': {
+                    'type': 'keyword',
+                    'ignore_above': 128
+                },
+                'email': {
+                    'type': 'keyword',
+                    'ignore_above': 128
+                },
+                'domain': {
+                    'type': 'keyword',
+                    'ignore_above': 128
+                },
+                'password': {
+                    'type': 'keyword',
+                    'ignore_above': 128,
+                    'index': False
+                },
+                'misc': {
+                    'type': 'text',
+                    'index': False,
+                    'norms': False,
+                    'index_options': 'freqs'
+                }
+            }
+        }
+        '''
+                'password': {
+                    'type': 'text',
+                    'index': False,
+                    'norms': False,
+                    'index_options': 'freqs'
+                }
+
+        '''
+        try:
+            self.es_index.put_mapping(index='accounts', doc_type='account', body=mappings)
+        except elasticsearch.exceptions.RequestError:
+            errprint('[!] Error setting Elasticsearch mappings')
+
 
         ### REDIS ###
         self.redis = redis.StrictRedis()
@@ -99,54 +150,66 @@ class DB():
 
 
 
-    def add_leak(self, leak, num_threads=4, chunk_size=500):
+    def add_leak(self, leak, num_threads=4, chunk_size=5000):
         '''
         benchmarks for adding 1M accounts:
-            (best average: ~62,500 per second)
-                batch size - time
-                =================
-                100 - 2:03
-                1000 - 1:51
-                5000 - 1:47
-                10000 - 1:36
-                100000 - 1:37
-                =======================
-                10000 (x2 threads) - 1:04
-                10000 (x4 threads) - 0:38
-                10000 (x8 threads) - 0:35
-                early implementation with low-level mp.Process() and mp.Queue(): ?? or was it Pipe() WHO KNOWS
-                    10000 (x8 procs, x1 threads) - 0:13
-                later implementation with mp.Pool() and mp.manager.Queue():
-                    10000 (x8 procs, x1 threads) - 0:23
-                    10000 (x4 procs, x2 threads) - 0:21
-                    10000 (x2 procs, x4 threads) - 0:24
-                later implementation attempting to replicate previous results:
-                    10000 (x8 procs, x1 threads) - 0:18
-                    10000 (x4 procs, x2 threads) - 0:20
-                    10000 (x4 procs, x3 threads) - 0:19
-                    10000 (x8 procs, x2 threads) - 0:17
-                mp.Process() and mp.Pipe():
-                    10000 (x8 procs, x1 threads) - 0:19
-                    10000 (x4 procs, x2 threads) - 0:20
-                    10000 (x4 procs, x3 threads) - 0:17
-                    10000 (x4 procs, x4 threads) - 0:17
-                    10000 (x8 procs, x2 threads) - 0:16
+            ELASTIC:
+                streaming_bulk:
+                    chunk size - time
+                    =================
+                    500     0:43
+                    1000    0:43
+                    5000    0:38
+                    10000   0:37
+                    20000   0:37
+                    =================
 
-        Benchmarks for LinkedIn:
-            (average: ~21,600 per second)
-                104,957,167 (x8 procs, x2 threads) - 01:20:59
-                    Total Accounts: 104,957,167
-                    Unique Accounts: 104,957,162 (100.0%)
-                    Time Elapsed: 01:20:59
-        Benchmarks for Exploit.in:
-        16 threads (with tmpfs):
-            [+] Total Accounts: 684,676,603
-            [+] Unique Accounts: 684,676,603 (100.0%)
-            [+] Time Elapsed: 7 hours, 21 minutes, 27 seconds
-        16 threads (with tmpfs + rsync every 30 minutes)
-            [+] Total Accounts: 684,676,603
-            [+] Unique Accounts: 649,522,395 (94.9%)
-            [+] Time Elapsed: 9 hours, 2 minutes, 28 seconds
+            MONGO:
+                (best average: ~62,500 per second)
+                    batch size - time
+                    =================
+                    100 - 2:03
+                    1000 - 1:51
+                    5000 - 1:47
+                    10000 - 1:36
+                    100000 - 1:37
+                    =======================
+                    10000 (x2 threads) - 1:04
+                    10000 (x4 threads) - 0:38
+                    10000 (x8 threads) - 0:35
+                    early implementation with low-level mp.Process() and mp.Queue(): ?? or was it Pipe() WHO KNOWS
+                        10000 (x8 procs, x1 threads) - 0:13
+                    later implementation with mp.Pool() and mp.manager.Queue():
+                        10000 (x8 procs, x1 threads) - 0:23
+                        10000 (x4 procs, x2 threads) - 0:21
+                        10000 (x2 procs, x4 threads) - 0:24
+                    later implementation attempting to replicate previous results:
+                        10000 (x8 procs, x1 threads) - 0:18
+                        10000 (x4 procs, x2 threads) - 0:20
+                        10000 (x4 procs, x3 threads) - 0:19
+                        10000 (x8 procs, x2 threads) - 0:17
+                    mp.Process() and mp.Pipe():
+                        10000 (x8 procs, x1 threads) - 0:19
+                        10000 (x4 procs, x2 threads) - 0:20
+                        10000 (x4 procs, x3 threads) - 0:17
+                        10000 (x4 procs, x4 threads) - 0:17
+                        10000 (x8 procs, x2 threads) - 0:16
+
+            Benchmarks for LinkedIn:
+                (average: ~21,600 per second)
+                    104,957,167 (x8 procs, x2 threads) - 01:20:59
+                        Total Accounts: 104,957,167
+                        Unique Accounts: 104,957,162 (100.0%)
+                        Time Elapsed: 01:20:59
+            Benchmarks for Exploit.in:
+            16 threads (with tmpfs):
+                [+] Total Accounts: 684,676,603
+                [+] Unique Accounts: 684,676,603 (100.0%)
+                [+] Time Elapsed: 7 hours, 21 minutes, 27 seconds
+            16 threads (with tmpfs + rsync every 30 minutes)
+                [+] Total Accounts: 684,676,603
+                [+] Unique Accounts: 649,522,395 (94.9%)
+                [+] Time Elapsed: 9 hours, 2 minutes, 28 seconds
         '''
 
         try:
@@ -162,8 +225,13 @@ class DB():
 
             start_time = time.time()
 
-            bulk_stream = self._bulk_account_generator()
-            for success, result in helpers.parallel_bulk(client=es, actions=bulk_stream, thread_count=num_threads, chunk_size=chunk_size):
+            # temporarily disable index refresh and replication for performance
+            self.es_index.put_settings(index='accounts', body={'index': {'refresh_interval': -1}})
+            self.es_index.put_settings(index='accounts', body={'index': {'number_of_replicas': 0}})
+
+            bulk_stream = self._bulk_account_generator(leak)
+            # for success, result in helpers.parallel_bulk(client=self.es, actions=bulk_stream, thread_count=num_threads, chunk_size=chunk_size):
+            for success, result in helpers.streaming_bulk(client=self.es, actions=bulk_stream, chunk_size=chunk_size):
                 self.leak_overall += 1
                 if success:
                     if result:
@@ -181,11 +249,19 @@ class DB():
                 errprint('[+] Unique Accounts: {:,} ({:.1f}%)'.format(self.leak_unique, ((self.leak_unique/self.leak_overall)*100)))
                 errprint('[+] Time Elapsed: {} hours, {} minutes, {} seconds\n'.format(int(time_elapsed/3600), int((time_elapsed%3600)/60), int((time_elapsed%3600)%60)))
 
+        except KeyboardInterrupt:
+            errprint('[!] Import stopped')
+            raise KeyboardInterrupt
+
         finally:
             # reset leak counters
             self.leak_unique = 0
             self.leak_overall = 0
             self.leak_size = 0
+
+            # reset elasticsearch settings
+            self.es_index.put_settings(index='accounts', body={'index': {'refresh_interval': '1s'}})
+            self.es_index.put_settings(index='accounts', body={'index': {'number_of_replicas': 1}})
 
 
     def remove_leak(self, source_id, batch_size=10000):
@@ -238,7 +314,9 @@ class DB():
         source_id = 1
 
         # check if source already exists
-        if self._elastic_exact_match(source_doc, index='sources', doc_type='source'):
+        source_match = self._elastic_exact_match(source_doc, index='sources', doc_type='source')
+        if source_match:
+            print(str(source_match))
             assert False, 'Source already exists'
         else:
             # source id = the number of sources in the index + 1
@@ -334,9 +412,6 @@ class DB():
             account_doc = account.document()
 
             yield {'_index': 'accounts', '_type': 'account', '_id': account_id, '_source': account_doc}
-                
-
-
 
 
 
@@ -383,7 +458,7 @@ class DB():
             if value:
                 query_obj['query']['bool']['must'].append({'match': {key: value}})
 
-        return self.es.search(index=index, doc_type=doc_type, body=query_obj)['hits']
+        return self.es.search(index=index, doc_type=doc_type, body=query_obj)['hits']['hits']
 
 
     @staticmethod

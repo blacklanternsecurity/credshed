@@ -173,6 +173,8 @@ class QuickParse():
                     errprint('[!] Please try again')
                     sleep(1)
 
+            translated_lines = []
+
             # must have at least two fields
             if not (any([i in self.mapping.values() for i in (self.fields['u'], self.fields['e'])]) and \
                 any([i in self.mapping.values() for i in (self.fields['p'], self.fields['h'], self.fields['m'])])):
@@ -180,14 +182,14 @@ class QuickParse():
                 errprint('[!] Not enough fields mapped')
                 self.mapping.clear()
                 unknown_fields = list(range(self.num_input_fields))
-
-            translated_lines = []
-            for line in all_lines:
-                try:
-                    translated_lines.append(str(self.translate_line(line)))
-                except AccountCreationError as e:
-                    errprint('[!] {}'.format(str(e)))
-                    continue
+                continue
+            else:
+                for line in all_lines:
+                    try:
+                        translated_lines.append(str(self.translate_line(line)))
+                    except AccountCreationError as e:
+                        errprint('[!] {}'.format(str(e)))
+                        continue
 
             # display and confirm selection
             errprint(('=' * 60))
