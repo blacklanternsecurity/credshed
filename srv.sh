@@ -189,7 +189,7 @@ start_containers()
 {
 
 	start_daemon
-	start_elastic
+	#start_elastic
 	#start_mongo
 	#start_redis
 
@@ -303,12 +303,14 @@ create_dirs()
 	# 	sudo chown 231999:231999 "$index_dir"
 	# 	sudo chmod 770 "$index_dir"
 	# fi
-	if [ ! -d "$mongo_dir" ]
-	then
-		sudo mkdir -p "$mongo_dir"
-		sudo chown 231999:231999 "$mongo_dir"
-		sudo chmod 770 "$mongo_dir"
-	fi
+	for _mongo_dir in $mongo_dir_0 $mongo_dir_1; do
+		if [ ! -d "$_mongo_dir" ]
+		then
+			sudo mkdir -p "$_mongo_dir"
+			sudo chown 231999:231999 "$_mongo_dir"
+			sudo chmod 770 "$_mongo_dir"
+		fi
+	done
 	if [ ! -d "$srv_dir" ]
 	then
 		sudo mkdir -p "$srv_dir"

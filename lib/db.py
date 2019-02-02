@@ -191,6 +191,13 @@ class DB():
                     Total Accounts: 104,957,167
                     Unique Accounts: 104,957,162 (100.0%)
                     Time Elapsed: 01:20:59
+
+            (average: ~65,400 per second)
+                104,957,167 (x24 procs, x2 shards, tmpfs [no storage bottleneck]) - 0:26:46
+                    Total Accounts: 104,957,167
+                    Unique Accounts: 104,957,162 (100.0%)
+                    Time Elapsed: 0 hours, 26 minutes, 46 seconds
+
         Benchmarks for Exploit.in:
         16 threads (with tmpfs):
             [+] Total Accounts: 684,676,603
