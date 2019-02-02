@@ -48,7 +48,7 @@ class Account():
             self.username = b''
 
         if not ( (self.email or self.username) and (self.password or self.misc) ):
-            raise AccountCreationError('"{}" needs either username or email and either a password or misc description'.format(str(self)))
+            raise AccountCreationError('need either username or email and either a password or misc description')
 
         for v in [self.email, self.username, self.password]:
             if len(v) >= 255:

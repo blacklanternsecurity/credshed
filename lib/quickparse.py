@@ -186,7 +186,7 @@ class QuickParse():
                 try:
                     translated_lines.append(str(self.translate_line(line)))
                 except AccountCreationError as e:
-                    errprint('[!] {}'.format(str(e)))
+                    errprint('[!] {}: {}'.format(str(e), str(line)))
                     continue
 
             # display and confirm selection
@@ -436,5 +436,5 @@ class QuickParse():
                 try:
                     yield self.translate_line(line)
                 except AccountCreationError as e:
-                    errprint('[!] {}'.format(str(e)))
+                    errprint('[!] {}: {}'.format(str(e), str(line)))
                     continue
