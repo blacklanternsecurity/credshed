@@ -5,6 +5,7 @@ import sys
 import base64
 import hashlib
 from pathlib import Path
+from datetime import datetime
 
 
 class AccountCreationError(Exception):
@@ -170,14 +171,17 @@ class Account():
 
 class Source():
 
-    def __init__(self, name, hashtype='', misc=''):
+    def __init__(self, name, hashtype='', misc='', date=datetime.now()):
 
         self.name       = name
         self.hashtype   = hashtype.upper()
         self.misc       = misc
+        if not type(date) == datetime:
+            raise TypeError('invalid date format, must be datetime()')
+        self.date       = date
 
 
-    def document(self, misc=True):
+    def document(self, misc=True, date=False):
 
         doc = dict()
 
@@ -185,6 +189,8 @@ class Source():
         doc['hashtype'] = self.hashtype
         if misc:
             doc['misc'] = self.misc
+        if date:
+            doc['date'] = self.misc
 
         return doc
 
@@ -216,18 +222,22 @@ class Leak():
         email='', username='', password='', misc=''
         '''
 
-        if type(args[0]) == Account:
-            a = args[0]
-        else:
-            a = Account(*args, **kwargs)
+        try:
+            if type(args[0]) == Account:
+                self.accounts.add(args[0])
+                return
+        except IndexError:
+            pass
 
-        self.accounts.add(a)
+        self.accounts.add(Account(*args, **kwargs))
 
 
     def dump(self, folder='cleaned', maximum=None):
         '''
         dump format is email:username:password:misc
         with null bytes in place of colons
+        '''
+
         '''
 
         folder = Path(folder).resolve()
@@ -250,6 +260,9 @@ class Leak():
                     errprint('\r[+] {:,}'.format(c), end='')
                 c += 1
         errprint('')
+        '''
+        for account in self.accounts:
+            sys.stdout.buffer.write(account.to_bytes() + b'\n')
 
 
     def read(self, file):

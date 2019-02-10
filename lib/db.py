@@ -58,11 +58,13 @@ class DB():
     def __init__(self):
 
         ### MONGO ###
-        self.client = pymongo.MongoClient()
-        # database
-        self.db = self.client['dump']
+        self.shard_client = pymongo.MongoClient('127.0.0.1', 27017)
+        self.noshard_client = pymongo.MongoClient('127.0.0.1', 27019)
+        # databases
+        self.shard_db = self.shard_client['credshed']
+        self.noshard_db = self.noshard_client['credshed']
         # accounts
-        self.accounts = self.db.accounts
+        self.accounts = self.shard_db.accounts
 
         #self.accounts.create_index([('id', pymongo.ASCENDING)])
         #self.accounts.create_index([('username', pymongo.ASCENDING)], sparse=True, background=True)
@@ -80,9 +82,9 @@ class DB():
         # self.accounts.find({'username': {'$in': index_char_range } }).count()
         # self.db.command('touch', 'accounts', index=True)
         # sources
-        self.sources = self.db.sources
+        self.sources = self.noshard_db.sources
         # counters
-        self.counters = self.db.counters
+        self.counters = self.noshard_db.counters
 
         ### REDIS ###
         self.redis = redis.StrictRedis()
@@ -284,11 +286,9 @@ class DB():
 
         try:
 
-            '''
-            #source_id = self.sources.find_one(source.document())['_id']
-            source_bytes = source_id.to_bytes(5, 'big')
+            # source_bytes = source_id.to_bytes(4, 'big')
             for _id in self.redis.scan_iter('a:*'):
-                self.redis.lrem(_id, 0, source_bytes)
+                self.redis.lrem(_id, 0, source_id)
                 if not self.redis.exists(_id):
                     to_delete.append(pymongo.DeleteOne({'_id': _id[2:].decode()}))
                     #to_delete.append(_id[2:].decode())
@@ -302,11 +302,11 @@ class DB():
             if to_delete:
                 #self.accounts.remove({'_id': {'$in': [d for d in to_delete]}})
                 self.accounts.bulk_write([d for d in to_delete])
-            '''
+
 
             #accounts_deleted = self.accounts.delete_many({'sources': [source_id]}).deleted_count
             # self.accounts.update_many({'sources': {'$in': [source_id]}}, {'$pull': {'sources': source_id}})
-            self.sources.delete_one(source.document())
+            self.sources.delete_one({'_id': source_id})
             self.counters.update_one({'collection': 'sources'}, {'$unset': {str(source_id): ''}})
 
         except TypeError as e:
@@ -320,13 +320,15 @@ class DB():
 
     def add_source(self, source):
 
-        source_doc = source.document()
+        source_doc = source.document(misc=False, date=False)
 
         if self.sources.find_one(source_doc) is not None:
             assert False, 'Source already exists'
         else:
             d = self.counters.find_one({'collection': 'sources'})
-            id_counter = (d['id_counter'] if d else 0)     
+            id_counter = (d['id_counter'] if d else 0)
+
+            source_doc = source.document(misc=True, date=True)
             while 1:       
 
                 try:
@@ -353,7 +355,7 @@ class DB():
         try:
 
             if accounts:
-                accounts_stats = self.db.command('collstats', 'accounts', scale=1048576)
+                accounts_stats = self.shard_db.command('collstats', 'accounts', scale=1048576)
                 errprint('[+] Account Stats (MB):')
                 for k in accounts_stats:
                     if k not in ['wiredTiger', 'indexDetails']:
@@ -394,7 +396,7 @@ class DB():
             errprint('[!] No accounts added yet', end='\n\n')
 
         if db:
-            db_stats = self.db.command('dbstats', scale=1048576)
+            db_stats = self.shard_db.command('dbstats', scale=1048576)
             errprint('[+] DB Stats (MB):')
             for k in db_stats:
                 errprint('\t{}: {}'.format(k, db_stats[k]))
@@ -406,7 +408,7 @@ class DB():
 
         s = self.sources.find_one({'_id': int(_id)})
         try:
-            return Source(s['name'], s['hashtype'], s['misc'])
+            return Source(s['name'], s['hashtype'], s['misc'], s['date'])
         except (TypeError, KeyError):
             return None
 
@@ -446,15 +448,16 @@ class DB():
         errprint('[+] Worker started')
 
         _redis = redis.StrictRedis()
-        _mongo = pymongo.MongoClient()['dump']
+        _mongo_shard = pymongo.MongoClient('127.0.0.1', 27017)['credshed']
+        _mongo_noshard = pymongo.MongoClient('127.0.0.1', 27019)['credshed']
         unique_accounts = 0
 
         for batch in iter(batch_queue.get, None):
 
             with concurrent.futures.ThreadPoolExecutor() as thread_executor:
 
-                mthread = thread_executor.submit(self._mongo_add_batch, _mongo, source_id, copy.deepcopy(batch))
-                #rthread = thread_executor.submit(self._redis_add_batch, _redis, source_id, batch)
+                mthread = thread_executor.submit(self._mongo_add_batch, _mongo_shard, _mongo_noshard, source_id, copy.deepcopy(batch))
+                rthread = thread_executor.submit(self._redis_add_batch, _redis, source_id, batch)
 
                 thread_executor.shutdown(wait=True)
                 unique_accounts += mthread.result()
@@ -469,11 +472,11 @@ class DB():
     def _redis_add_batch(_redis, source_id, batch):
 
         for account_doc in batch:
-            _redis.lpush('a:' + account_doc['_id'], source_id.to_bytes(5, 'big'))
+            _redis.lpush('a:' + account_doc['_id'], source_id)
 
 
     @staticmethod
-    def _mongo_add_batch(_mongo, source_id, batch, max_attempts=3):
+    def _mongo_add_batch(_mongo_shard, _mongo_noshard, source_id, batch, max_attempts=3):
 
         unique_accounts = 0
         attempts_left = int(max_attempts)
@@ -481,13 +484,15 @@ class DB():
 
         for account_doc in batch:
             _id = account_doc.pop('_id')
+            # if "sources" array is stored in the document:
+            #  db.accounts.update(account_doc, {'$addToSet': {'sources': source_id}}, upsert=True)
             mongo_batch.append(pymongo.UpdateOne({'_id': _id}, {'$setOnInsert': account_doc}, upsert=True))
 
         while attempts_left > 0:
             try:
 
-                result = _mongo.accounts.bulk_write(mongo_batch, ordered=False)
-                _mongo.counters.update_one({'collection': 'sources'}, {'$inc': {str(source_id): len(mongo_batch)}}, upsert=True)
+                result = _mongo_shard.accounts.bulk_write(mongo_batch, ordered=False)
+                _mongo_noshard.counters.update_one({'collection': 'sources'}, {'$inc': {str(source_id): len(mongo_batch)}}, upsert=True)
                 unique_accounts = result.upserted_count
                 return unique_accounts
 
@@ -499,7 +504,7 @@ class DB():
                 except:
                     pass
                 attempts_left -= 1
-                sleep(1)
+                sleep(5)
                 continue
 
         errprint('\n[!] Failed to add batch after {} tries'.format(max_attempts))

@@ -18,7 +18,6 @@ from datetime import datetime
 from multiprocessing import cpu_count
 
 
-
 def get_leak_dirs(path):
     '''
     takes directory
@@ -37,7 +36,6 @@ def get_leak_dirs(path):
                     yield p
     except StopIteration:
         pass
-
 
 def get_leak_files(path):
     '''

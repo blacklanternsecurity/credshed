@@ -180,6 +180,7 @@ class QuickParse():
                 errprint('[!] Not enough fields mapped')
                 self.mapping.clear()
                 unknown_fields = list(range(self.num_input_fields))
+                continue
 
             translated_lines = []
             for line in all_lines:

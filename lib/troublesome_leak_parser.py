@@ -5,7 +5,7 @@ from leak import *
 
 class _2844(Leak):
 
-    def __init__(self, source='2844', hashtype=''):
+    def __init__(self, dir_name, source='2844', hashtype=''):
 
         super().__init__(source_name=source, source_hashtype=hashtype)
 
@@ -14,7 +14,7 @@ class _2844(Leak):
 
 class LinkedIn(Leak):
 
-    def __init__(self, source='linkedin', hashtype='SHA1'):
+    def __init__(self, dir_name, source='linkedin', hashtype='SHA1'):
 
         super().__init__(source_name=source, source_hashtype=hashtype)
 
@@ -39,7 +39,8 @@ class LinkedIn(Leak):
             self.add_account(email=i, password='Password1')
         '''
 
-        self.files      = files # list of files containing data
+        #self.files      = files # list of files containing data
+        self.dir_name = Path(dir_name)
         self.user_ids   = dict() # dictionary in format: id:username
         self.passwords  = dict() # dictionary in format: hash:password
         self.get_user_ids()
@@ -67,14 +68,14 @@ class LinkedIn(Leak):
 
             errprint('[+]', end='')
 
-            for file in self.files:
+            for file in files:
 
                 if file not in ['1.sql.txt']:
 
                     errprint(' Processing file "{}"'.format(file))
 
                     Path(self.source.name).mkdir(mode=0o750, exist_ok=True)
-                    with open('../raw/{}/{}'.format(self.source.name, file), 'rb') as f:
+                    with open(str(self.dir_name / file), 'rb') as f:
                         for line in f:
 
                             if file == '29.txt':
@@ -109,12 +110,14 @@ class LinkedIn(Leak):
                                 p = h
 
                             # weed out fake accounts (any account with a numeric password of length 15)
+                            '''
                             try:
                                 if len(p) == 15:
                                     int(p)
                                     continue
                             except ValueError:
                                 pass
+                            '''
 
                             # add a note if there's no password
                             if not p:
@@ -134,10 +137,10 @@ class LinkedIn(Leak):
     def get_user_ids(self):
 
         # create id:username dictionary
-        user_ids_file = Path('raw/{}/{}'.format(self.source.name, 'user_ids'))
+        user_ids_file = self.dir_name / 'user_ids'
         #user_ids_file = Path('/tmp/user_ids')
         if user_ids_file.exists():
-            errprint('[+] Reading user IDs from {}'.format(user_ids_file.absolute()))
+            errprint('[+] Reading user IDs from {}'.format(user_ids_file.resolve()))
 
             with open(user_ids_file, 'rb') as f:
                 c = 0
@@ -159,10 +162,10 @@ class LinkedIn(Leak):
         else:
             for file in ['29.txt', '1.sql.txt']:
 
-                filename = Path('../raw/{}/{}'.format(self.source.name, file))
-                errprint('[+] Reading {}'.format(filename.absolute()))
+                filename = self.dir_name / file
+                errprint('[+] Reading {}'.format(filename.resolve()))
 
-                with open(filename, 'rb') as f:
+                with open(str(filename), 'rb') as f:
 
                     for line in f:
                         line = line.strip()
@@ -194,7 +197,7 @@ class LinkedIn(Leak):
 
                 errprint('[+] {:,} entries so far'.format(len(self.user_ids)))
 
-            errprint('[+] Writing {:,} user IDs to {}'.format(len(self.user_ids), user_ids_file.absolute()))
+            errprint('[+] Writing {:,} user IDs to {}'.format(len(self.user_ids), user_ids_file.resolve()))
             sleep(3)
             with open(user_ids_file, 'w') as f:
                 for i in self.user_ids:
@@ -203,9 +206,9 @@ class LinkedIn(Leak):
 
     def get_password_hashes(self):
 
-        filename = Path('../raw/{}/hashes.org-linkedin-97.92-percent.txt'.format(self.source.name))
+        filename = self.dir_name / 'hashes.org-linkedin-97.92-percent.txt'
         #filename = Path('/tmp/hashes')
-        errprint('[+] Reading hashes from {}'.format(filename.absolute()))
+        errprint('[+] Reading hashes from {}'.format(filename.resolve()))
 
         with open(filename, 'rb') as f:
             c = 0
@@ -223,6 +226,9 @@ class LinkedIn(Leak):
 
 if __name__ == '__main__':
 
-    linkedin = LinkedIn()
+    dir_name = Path(sys.argv[1])
+    assert dir_name.exists()
+
+    linkedin = LinkedIn(dir_name)
     linkedin.read()
     linkedin.dump()
