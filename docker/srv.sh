@@ -137,7 +137,7 @@ delete_db()
 create_dirs()
 {
 
-	for _mongo_dir in $mongo_dir_0 $mongo_dir_1 $mongo_standalone_dir; do
+	for _mongo_dir in "$mongo_dir_0" "$mongo_dir_1" "$mongo_standalone_dir"; do
 		if [ ! -d "$_mongo_dir" ]
 		then
 			sudo mkdir -p "$_mongo_dir"
@@ -193,6 +193,9 @@ do
 		--stop|stop|-k|-K|--kill|kill)
 			do_stop=true
 			;;
+		--purge|purge)
+			do_purge=true
+			;;
 		-h|--help|help)
 			usage
 			;;
@@ -220,6 +223,12 @@ if [ -n "$do_delete" ]
 then
 	kill_dock
 	delete_db
+fi
+
+if [ -n "$do_purge" ]
+then
+	kill_dock
+	clean
 fi
 
 if [ -n "$do_start" ]

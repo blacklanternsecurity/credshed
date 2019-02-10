@@ -9,44 +9,53 @@ services:
     command: mongod --port 27017 --configsvr --replSet configserver --noprealloc --smallfiles --oplogSize 16 --bind_ip_all
     volumes:
       - ./mongo_scripts:/scripts
-    networks:
-      - mongo_sharded
+#    networks:
+#      - mongo_sharded
+
+  config1:
+    image: mongo
+    command: mongod --port 27017 --configsvr --replSet configserver --noprealloc --smallfiles --oplogSize 16 --bind_ip_all
+    volumes:
+      - ./mongo_scripts:/scripts
+#    networks:
+#      - mongo_sharded
 
 
   ## Shards
   shard0a:
     image: mongo
-    command: mongod --port 27018 --wiredTigerDirectoryForIndexes --shardsvr --replSet shard0 --noprealloc --smallfiles --oplogSize 16 --setParameter maxIndexBuildMemoryUsageMegabytes=20000 --setParameter diagnosticDataCollectionEnabled=false --bind_ip_all
+    command: mongod --port 27018 --shardsvr --replSet shard0 --noprealloc --smallfiles --oplogSize 16 --bind_ip_all
     volumes:
       - ./mongo_scripts:/scripts
       - $mongo_dir_0:/data/db:delegated
-    networks:
-      - mongo_sharded
+#    networks:
+#      - mongo_sharded
 
   shard1a:
     image: mongo
-    command: mongod --port 27018 --wiredTigerDirectoryForIndexes --shardsvr --replSet shard1 --noprealloc --smallfiles --oplogSize 16 --setParameter maxIndexBuildMemoryUsageMegabytes=20000 --setParameter diagnosticDataCollectionEnabled=false --bind_ip_all
+    command: mongod --port 27018 --shardsvr --replSet shard1 --noprealloc --smallfiles --oplogSize 16 --bind_ip_all
     volumes:
       - ./mongo_scripts:/scripts
       - $mongo_dir_1:/data/db:delegated
-    networks:
-      - mongo_sharded
+#    networks:
+#      - mongo_sharded
 
 
   ## Router
   router:
     image: mongo
-    command: mongos --port 27017 --configdb configserver/config0:27017 --bind_ip_all
+    command: mongos --port 27017 --configdb configserver/config0:27017,config1:27017 --bind_ip_all
     ports:
       - "127.0.0.1:27017:27017"
     volumes:
       - ./mongo_scripts:/scripts
     depends_on:
       - config0
+      - config1
       - shard0a
       - shard1a
-    networks:
-      - mongo_sharded
+#    networks:
+#      - mongo_sharded
 
 
   ## Non-sharded Mongo
@@ -70,5 +79,5 @@ services:
 
 
 
-networks:
-  mongo_sharded:
+#networks:
+#  mongo_sharded:

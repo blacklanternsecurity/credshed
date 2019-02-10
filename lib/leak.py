@@ -171,14 +171,17 @@ class Account():
 
 class Source():
 
-    def __init__(self, name, hashtype='', misc='', date=datetime.now()):
+    def __init__(self, name, hashtype='', misc='', date=None):
 
         self.name       = name
         self.hashtype   = hashtype.upper()
         self.misc       = misc
-        if not type(date) == datetime:
-            raise TypeError('invalid date format, must be datetime()')
-        self.date       = date
+        if date is None:
+            self.date   = datetime.now()
+        elif not type(date) == datetime:
+            raise TypeError('invalid date format, must be datetime(), not {} / {}'.format(type(date), str(date)))
+        else:
+            self.date   = date
 
 
     def document(self, misc=True, date=False):
@@ -190,7 +193,7 @@ class Source():
         if misc:
             doc['misc'] = self.misc
         if date:
-            doc['date'] = self.misc
+            doc['date'] = self.date
 
         return doc
 

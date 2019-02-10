@@ -358,7 +358,7 @@ class DB():
                 accounts_stats = self.shard_db.command('collstats', 'accounts', scale=1048576)
                 errprint('[+] Account Stats (MB):')
                 for k in accounts_stats:
-                    if k not in ['wiredTiger', 'indexDetails']:
+                    if k not in ['wiredTiger', 'indexDetails', 'shards', 'raw']:
                         errprint('\t{}: {}'.format(k, accounts_stats[k]))
             errprint()
 
@@ -407,10 +407,10 @@ class DB():
     def get_source(self, _id):
 
         s = self.sources.find_one({'_id': int(_id)})
-        try:
-            return Source(s['name'], s['hashtype'], s['misc'], s['date'])
-        except (TypeError, KeyError):
-            return None
+        #try:
+        return Source(s['name'], s['hashtype'], s['misc'], s['date'])
+        #except (TypeError, KeyError):
+        #    return None
 
 
     def _gen_batches(self, leak, source_id, batch_size=10000):
