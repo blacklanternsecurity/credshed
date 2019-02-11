@@ -28,7 +28,8 @@ class Account():
 
     def __init__(self, email=b'', username=b'', password=b'', _hash=b'', misc=b''):
 
-        self.email = email.strip().lower()
+        # remove whitespace, single-quotes, and backslashes
+        self.email = email.strip().lower().replace(b"'", b'').replace(b'\\', b'')
         self.username = username.strip()
         if _hash and not password:
             self.password = _hash.strip()

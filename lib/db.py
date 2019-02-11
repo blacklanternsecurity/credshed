@@ -58,13 +58,13 @@ class DB():
     def __init__(self):
 
         ### MONGO ###
-        self.shard_client = pymongo.MongoClient('127.0.0.1', 27017)
-        self.noshard_client = pymongo.MongoClient('127.0.0.1', 27019)
+        self.client = pymongo.MongoClient('127.0.0.1', 27017)
+        # self.noshard_client = pymongo.MongoClient('127.0.0.1', 27019)
         # databases
-        self.shard_db = self.shard_client['credshed']
-        self.noshard_db = self.noshard_client['credshed']
+        self.db = self.client['credshed']
+        #self.noshard_db = self.noshard_client['credshed']
         # accounts
-        self.accounts = self.shard_db.accounts
+        self.accounts = self.db.accounts
 
         #self.accounts.create_index([('id', pymongo.ASCENDING)])
         #self.accounts.create_index([('username', pymongo.ASCENDING)], sparse=True, background=True)
@@ -82,9 +82,9 @@ class DB():
         # self.accounts.find({'username': {'$in': index_char_range } }).count()
         # self.db.command('touch', 'accounts', index=True)
         # sources
-        self.sources = self.noshard_db.sources
+        self.sources = self.db.sources
         # counters
-        self.counters = self.noshard_db.counters
+        self.counters = self.db.counters
 
         ### REDIS ###
         self.redis = redis.StrictRedis()
@@ -355,7 +355,7 @@ class DB():
         try:
 
             if accounts:
-                accounts_stats = self.shard_db.command('collstats', 'accounts', scale=1048576)
+                accounts_stats = self.db.command('collstats', 'accounts', scale=1048576)
                 errprint('[+] Account Stats (MB):')
                 for k in accounts_stats:
                     if k not in ['wiredTiger', 'indexDetails', 'shards', 'raw']:
@@ -396,7 +396,7 @@ class DB():
             errprint('[!] No accounts added yet', end='\n\n')
 
         if db:
-            db_stats = self.shard_db.command('dbstats', scale=1048576)
+            db_stats = self.db.command('dbstats', scale=1048576)
             errprint('[+] DB Stats (MB):')
             for k in db_stats:
                 errprint('\t{}: {}'.format(k, db_stats[k]))
@@ -448,15 +448,14 @@ class DB():
         errprint('[+] Worker started')
 
         _redis = redis.StrictRedis()
-        _mongo_shard = pymongo.MongoClient('127.0.0.1', 27017)['credshed']
-        _mongo_noshard = pymongo.MongoClient('127.0.0.1', 27019)['credshed']
+        _mongo = pymongo.MongoClient('127.0.0.1', 27017)['credshed']
         unique_accounts = 0
 
         for batch in iter(batch_queue.get, None):
 
             with concurrent.futures.ThreadPoolExecutor() as thread_executor:
 
-                mthread = thread_executor.submit(self._mongo_add_batch, _mongo_shard, _mongo_noshard, source_id, copy.deepcopy(batch))
+                mthread = thread_executor.submit(self._mongo_add_batch, _mongo, source_id, copy.deepcopy(batch))
                 rthread = thread_executor.submit(self._redis_add_batch, _redis, source_id, batch)
 
                 thread_executor.shutdown(wait=True)
@@ -476,7 +475,7 @@ class DB():
 
 
     @staticmethod
-    def _mongo_add_batch(_mongo_shard, _mongo_noshard, source_id, batch, max_attempts=3):
+    def _mongo_add_batch(_mongo, source_id, batch, max_attempts=3):
 
         unique_accounts = 0
         attempts_left = int(max_attempts)
@@ -491,8 +490,8 @@ class DB():
         while attempts_left > 0:
             try:
 
-                result = _mongo_shard.accounts.bulk_write(mongo_batch, ordered=False)
-                _mongo_noshard.counters.update_one({'collection': 'sources'}, {'$inc': {str(source_id): len(mongo_batch)}}, upsert=True)
+                result = _mongo.accounts.bulk_write(mongo_batch, ordered=False)
+                _mongo.counters.update_one({'collection': 'sources'}, {'$inc': {str(source_id): len(mongo_batch)}}, upsert=True)
                 unique_accounts = result.upserted_count
                 return unique_accounts
 

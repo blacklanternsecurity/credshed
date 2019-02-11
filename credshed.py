@@ -254,7 +254,7 @@ def main(options):
 if __name__ == '__main__':
 
     parser = argparse.ArgumentParser()
-    default_threads = cpu_count()
+    default_threads = max(2, min(12, (int(cpu_count()/2)+2)))
 
     parser.add_argument('search',                       nargs='*',                      help='search term(s)')
     parser.add_argument('-a', '--add',      type=Path,  nargs='+',                      help='add file(s) to DB')

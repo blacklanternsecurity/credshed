@@ -20,7 +20,6 @@ services:
 #    networks:
 #      - mongo_sharded
 
-
   ## Shards
   shard0a:
     image: mongo
@@ -56,16 +55,6 @@ services:
       - shard1a
 #    networks:
 #      - mongo_sharded
-
-
-  ## Non-sharded Mongo
-  mongo_standalone:
-    image: mongo
-    command: mongod --port 27019 --bind_ip_all
-    ports:
-      - "127.0.0.1:27019:27019"
-    volumes:
-      - $mongo_standalone_dir:/data/db:delegated
 
 
   ## Redis
