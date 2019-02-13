@@ -124,7 +124,7 @@ def main(options):
 
             try:
 
-                q = QuickParse(file=leak_file, source_name=leak_friendly_name, unattended=options.unattended)
+                q = QuickParse(file=leak_file, source_name=leak_friendly_name, unattended=options.unattended, preformatted=options.preformatted)
 
             except QuickParseError as e:
                 e = '[!] {}'.format(str(e))
@@ -168,6 +168,7 @@ def main(options):
 
             else:
                 errprint('\n[+] Writing batch to {}\n'.format(str(options.out)))
+                # open file in append mode because we may be parsing more than one file
                 with open(options.out, 'wb+') as f:
                     for account in leak:
                         #errprint(str(account))
@@ -254,10 +255,11 @@ def main(options):
 if __name__ == '__main__':
 
     parser = argparse.ArgumentParser()
-    default_threads = max(2, min(12, (int(cpu_count()/2)+2)))
+    default_threads = max(2, min(12, (int(cpu_count()/1.5)+1)))
 
     parser.add_argument('search',                       nargs='*',                      help='search term(s)')
     parser.add_argument('-a', '--add',      type=Path,  nargs='+',                      help='add file(s) to DB')
+    parser.add_argument('-pf', '--preformatted',        action='store_true',            help='input file is in format email:username:password:misc')
     parser.add_argument('-t', '--stats',    action='store_true',                        help='show db stats')
     parser.add_argument('-o', '--out',      type=Path,  default='__db__',               help='write output to file instead of DB')
     parser.add_argument('-d', '--delete-leak',          nargs='*',                      help='delete leak(s) from DB, e.g. "1-3,5,7-9"')

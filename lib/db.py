@@ -288,7 +288,7 @@ class DB():
 
             # source_bytes = source_id.to_bytes(4, 'big')
             for _id in self.redis.scan_iter('a:*'):
-                self.redis.lrem(_id, 0, source_id)
+                self.redis.srem(_id, source_id)
                 if not self.redis.exists(_id):
                     to_delete.append(pymongo.DeleteOne({'_id': _id[2:].decode()}))
                     #to_delete.append(_id[2:].decode())
@@ -471,7 +471,7 @@ class DB():
     def _redis_add_batch(_redis, source_id, batch):
 
         for account_doc in batch:
-            _redis.lpush('a:' + account_doc['_id'], source_id)
+            _redis.sadd('a:' + account_doc['_id'], source_id)
 
 
     @staticmethod

@@ -36,7 +36,7 @@ class QuickParse():
     yields Account() objects
     '''
 
-    def __init__(self, file, source_name=None, unattended=False, threshold=.8):
+    def __init__(self, file, source_name=None, unattended=False, preformatted=False, threshold=.8):
 
         self.file = Path(file).resolve()
 
@@ -71,11 +71,18 @@ class QuickParse():
 
         # gather information about source
         self.gather_source_info(file)
-        self.gather_info()
+        if preformatted:
+            self.mapping[0] = self.fields['e']
+            self.mapping[1] = self.fields['u']
+            self.mapping[2] = self.fields['p']
+            self.mapping[3] = self.fields['m']
+            self.input_delimiter = b'\x00'
+        else:
+            self.gather_info()
 
 
 
-    def gather_info(self, num_lines=100):
+    def gather_info(self, num_lines=5000):
         '''
         gather information about how to parse the file
         such as delimiter, field order, etc.
@@ -107,25 +114,30 @@ class QuickParse():
                 raise FieldDetectionError('not enough input fields detected')
             else:
                 self.num_input_fields = int(input('How many fields? > ')) or 2
+        else:
+            errprint('[+] {} fields detected'.format(self.num_input_fields))
 
         # detect what type of data is in each field
         # weed out the easy stuff (emails, hashes, blank columns)
         columns, unknown_fields = self._detect_fields(all_lines)
 
+        print('UNKNOWN FIELDS: {}'.format(str(unknown_fields)))
+        print('MAPPING: {}'.format(str(self.mapping)))
+
         if unknown_fields:
 
             # try and figure the rest out
             if len(unknown_fields) == 1:
-                errprint('[+] Assuming passwords in column {}'.format(unknown_fields[0]))
+                errprint('[+] Assuming passwords in column #{}'.format(unknown_fields[0]+1))
                 self.password_field = unknown_fields[0]
                 self.mapping[unknown_fields[0]] = self.fields['p']
                 unknown_fields = []
 
             elif len(unknown_fields) == 2:
                 self.password_field = unknown_fields[1]
-                errprint('[+] Assuming usernames in column {}'.format(unknown_fields[0]))
+                errprint('[+] Assuming usernames in column #{}'.format(unknown_fields[0]+1))
                 self.mapping[unknown_fields[0]] = self.fields['u']
-                errprint('[+] Assuming passwords in column {}'.format(unknown_fields[1]))
+                errprint('[+] Assuming passwords in column #{}'.format(unknown_fields[1]+1))
                 self.mapping[unknown_fields[1]] = self.fields['p']
                 unknown_fields = []
 
@@ -139,9 +151,18 @@ class QuickParse():
             for i in unknown_fields:
                 column = columns[i]
                 if all([field == '' for field in column]):
+                    errprint('[+] Skipping blank column')
                     continue
-            
-                errprint('  ' + '\n  '.join(column))
+
+                sample_len = 20
+                for f in random.sample(column, len(column)):
+                    if f:
+                        errprint('  {}'.format(f))
+                        sample_len -= 1
+                    if sample_len <= 0:
+                        break
+
+                #errprint('  ' + '\n  '.join(random.sample(column, 20)))
 
                 # assume last field is password if email/username is already mapped
                 #if auto:
@@ -187,7 +208,7 @@ class QuickParse():
                 try:
                     translated_lines.append(str(self.translate_line(line)))
                 except AccountCreationError as e:
-                    errprint('[!] {}: {}'.format(str(e), str(line)))
+                    #errprint('[!] {}: {}'.format(str(e), str(line)))
                     continue
 
             # display and confirm selection
@@ -208,6 +229,10 @@ class QuickParse():
                 errprint('[+] Unattended parsing of {} was successful\n'.format(self.file))
                 self.info_gathered = True
             else:
+                for in_index in self.mapping:
+                    for i in self.fields.items():
+                        if self.mapping[in_index] == i[1]:
+                            print('Column #{} -> {}'.format(in_index+1, i[0]))
                 if not input('\nOK? [Y/n] ').lower().startswith('n'):
                     self.info_gathered = True
                 else:
@@ -251,17 +276,19 @@ class QuickParse():
         '''
         converts each line to an Account() object
         '''
-
-        line = [f.strip(b'\r\n') for f in line.split(self.input_delimiter)]
+        line = line.strip(b'\r\n').split(self.input_delimiter)
         len_diff = len(line) - self.num_input_fields
         line_new = [b''] * 5
 
         for p in self.mapping:
-            if len_diff and p == self.password_field:
-                # handle edge case where password contains delimiter character
-                line_new[self.mapping[p]] = self.input_delimiter.join(line[p:p+len_diff+1])
-            else:
-                line_new[self.mapping[p]] = line[p]
+            try:
+                if len_diff and p == self.password_field:
+                    # handle edge case where password contains delimiter character
+                    line_new[self.mapping[p]] = self.input_delimiter.join(line[p:p+len_diff+1])
+                else:
+                    line_new[self.mapping[p]] = line[p]
+            except IndexError:
+                raise AccountCreationError('Index {} does not exist in {}'.format(p, str(line)))
 
         else:
             email, username, password, _hash, misc = line_new
@@ -399,28 +426,29 @@ class QuickParse():
                 continue
 
             # detect emails
-            num_emails = [Account.is_email(field) for field in column].count(True)
+            num_emails = [Account.is_fuzzy_email(field) for field in column].count(True)
             if num_emails > int(.75 * len(lines)) and not self.fields['e'] in self.mapping.values():
-                errprint('[+] Detected emails in column {}'.format(i))
+                errprint('[+] Detected emails in column #{}'.format(i+1))
                 self.mapping[i] = self.fields['e']
 
             # detect hashes
             # all non-blank fields in column must be the same length
             # and be at least 12 characters in length
             # and contain only hex characters
-            elif random_field_length >= 12:
-                if [len(field) == random_field_length for field in column_no_blanks].count(True)/len(column_no_blanks) > self.threshold:
-                    if [all([char.lower() in 'abcdef0123456789' for char in field]) for field in column_no_blanks].count(True)/len(column_no_blanks) > self.threshold:
-                        errprint('[+] Detected hashes in column {}'.format(i))
-                        self.mapping[i] = self.fields['h']
+            elif random_field_length >= 12 and \
+                [len(field) == random_field_length for field in column_no_blanks].count(True)/len(column_no_blanks) > self.threshold and \
+                [all([char.lower() in 'abcdef0123456789' for char in field]) for field in column_no_blanks].count(True)/len(column_no_blanks) > self.threshold:
+                    errprint('[+] Detected hashes in column #{}'.format(i+1))
+                    self.mapping[i] = self.fields['h']
 
             else:
                 # skip columns containing numeric values like UIDs, dates, IP addresses, SSNs, etc.
                 # skip columns containing NULL
                 skip_chars = ['0123456789-.:_ ']
-                if not ( [all([char in string.digits for char in field]) for field in column].count(True)/len(lines) > self.threshold ) and \
+                if ( [all([char in string.digits for char in field]) for field in column].count(True)/len(lines) > self.threshold ) and \
                 not ([field.upper() == 'NULL' for field in column].count(True)/len(lines) > self.threshold ):
-                
+                    errprint('[+] Skipping numeric field')
+                else:
                     unknown_fields.append(i)
 
             columns[i] = column
@@ -437,5 +465,5 @@ class QuickParse():
                 try:
                     yield self.translate_line(line)
                 except AccountCreationError as e:
-                    errprint('[!] {}: {}'.format(str(e), str(line)))
+                    errprint('[!] {}: {}'.format(str(e)[:128], str(line)[:128]))
                     continue

@@ -137,14 +137,12 @@ delete_db()
 create_dirs()
 {
 
-	for _mongo_dir in "$mongo_dir_0" "$mongo_dir_1" "$mongo_standalone_dir"; do
-		if [ ! -d "$_mongo_dir" ]
-		then
-			sudo mkdir -p "$_mongo_dir"
-			sudo chown 231999:231999 "$_mongo_dir"
-			sudo chmod 770 "$_mongo_dir"
-		fi
-	done
+	if [ ! -d "$mongo_dir_0" ]
+	then
+		sudo mkdir -p "$mongo_dir_0"
+		sudo chown 231999:231999 "$mongo_dir_0"
+		sudo chmod 770 "$mongo_dir_0"
+	fi
 	if [ ! -d "$srv_dir" ]
 	then
 		sudo mkdir -p "$srv_dir"

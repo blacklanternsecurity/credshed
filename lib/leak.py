@@ -25,36 +25,42 @@ class Account():
 
     email_regex = re.compile(r'^([a-zA-Z0-9_\-\.\+]+)@([a-zA-Z0-9_\-\.]+)\.([a-zA-Z]{2,8})$')
     email_regex_bytes = re.compile(rb'^([a-zA-Z0-9_\-\.\+]+)@([a-zA-Z0-9_\-\.]+)\.([a-zA-Z]{2,8})$')
+    fuzzy_email_regex = re.compile(r'^(.+)@(.+)\.(.+)')
+    fuzzy_email_regex_bytes = re.compile(rb'^(.+)@(.+)\.(.+)')
 
     def __init__(self, email=b'', username=b'', password=b'', _hash=b'', misc=b''):
 
         # remove whitespace, single-quotes, and backslashes
-        self.email = email.strip().lower().replace(b"'", b'').replace(b'\\', b'')
-        self.username = username.strip()
+        self.email = email.strip().lower().translate(None, b"'\\")
+        self.username = username.strip().translate(None, b"'\\")
+        self.misc = misc.strip()
+
+        if not self.email:
+            if self.is_email(self.username):
+                # errprint('\n[+] Username "{}" is an email'.format(str(self.username)))
+                self.email = self.username.lower()
+                self.username = b''
+
+        else:
+            if not self.email_regex_bytes.match(self.email):
+                #errprint('[*] Invalid email: {}'.format(self.email))
+                if not self.username:
+                    # errprint('\n[+] Changing to username')
+                    self.username = self.email                    
+                self.email = b''
+
         if _hash and not password:
             self.password = _hash.strip()
         else:
             self.password = password
-        self.misc = misc.strip()
-
-        if email:
-            if not self.email_regex_bytes.match(email):
-                if not username:
-                    self.username = email
-                else:
-                    errprint('\n[*] Invalid email: {}'.format(email))
-                self.email = b''
-
-        elif self.is_email(username) and not self.email:
-            self.email = username.lower()
-            self.username = b''
 
         if not ( (self.email or self.username) and (self.password or self.misc) ):
-            raise AccountCreationError('need either username or email and either a password or misc description')
+            # print(email, username, password, _hash, misc)
+            raise AccountCreationError('need either username or email and either a password or misc description:\n{}'.format(str(self)[:255]))
 
         for v in [self.email, self.username, self.password]:
             if len(v) >= 255:
-                raise AccountCreationError('Value {} is too long'.format(str(v)[2:-1]))
+                raise AccountCreationError('Value {} is too long'.format(str(v)[2:-1][:255]))
 
 
     def document(self, id_only=False):
@@ -106,6 +112,20 @@ class Account():
                 return True
 
         return False
+
+
+    @classmethod
+    def is_fuzzy_email(self, email):
+
+        try:
+            if self.fuzzy_email_regex.match(email):
+                return True
+        except TypeError:
+            if self.fuzzy_email_regex_bytes.match(email):
+                return True
+
+        return False
+
 
 
     @staticmethod
