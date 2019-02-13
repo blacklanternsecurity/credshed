@@ -18,4 +18,4 @@ services:
       - "127.0.0.1:6379:6379"
     volumes:
       - "$redis_dir:/data:delegated"
-    entrypoint: redis-server --maxmemory 25000000000 --maxmemory-policy allkeys-random
+    entrypoint: redis-server --dir /data --dbfilename credshed.db --rdbcompression yes --maxmemory 35000000000 --maxmemory-policy allkeys-lfu --save 3600 1

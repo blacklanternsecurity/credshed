@@ -121,9 +121,6 @@ class QuickParse():
         # weed out the easy stuff (emails, hashes, blank columns)
         columns, unknown_fields = self._detect_fields(all_lines)
 
-        print('UNKNOWN FIELDS: {}'.format(str(unknown_fields)))
-        print('MAPPING: {}'.format(str(self.mapping)))
-
         if unknown_fields:
 
             # try and figure the rest out
