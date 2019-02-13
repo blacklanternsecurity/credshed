@@ -322,8 +322,12 @@ class DB():
 
         source_doc = source.document(misc=False, date=False)
 
-        if self.sources.find_one(source_doc) is not None:
-            assert False, 'Source already exists'
+        source_in_db = self.sources.find_one(source_doc)
+        if source_in_db is not None:
+            source_id, source_name = source_in_db['_id'], source_in_db['name']
+            errprint('[*] Source ID {} ({}) already exists'.format(source_id, source_name))
+            return source_id
+            #assert False, 'Source already exists'
         else:
             d = self.counters.find_one({'collection': 'sources'})
             id_counter = (d['id_counter'] if d else 0)

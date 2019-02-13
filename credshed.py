@@ -138,10 +138,9 @@ def main(options):
 
             leak = Leak(q.source_name, q.source_hashtype, q.source_misc)
             # make sure source doesn't already exist
-            if db.sources.find_one(leak.source.document(misc=False)) is not None:
-                errprint('[!] Source already exists')
-                continue
-                #assert False, 'Source already exists'
+            #if db.sources.find_one(leak.source.document(misc=False)) is not None:
+            #    errprint('[!] Source already exists')
+            #    continue
 
             if options.no_deduplication:
                 leak.accounts = q.__iter__()
