@@ -1,10 +1,5 @@
 #!/usr/bin/env python3.7
 
-'''
-TODO:
-    clean up code, split gather_info() into separate functions
-'''
-
 import random
 import string
 from .db import *
@@ -140,7 +135,7 @@ class QuickParse():
 
             elif self.unattended:
                 # die alone, in the dark
-                raise TypeError('Unknown column in {}'.format(self.file))
+                raise FieldDetectionError('Unknown column in {}'.format(self.file))
 
 
         # ask for help
@@ -174,7 +169,7 @@ class QuickParse():
                 #        break
 
                 if self.unattended:
-                    raise TypeError('Unknown column in {}'.format(self.file))
+                    raise FieldDetectionError('Unknown column in {}'.format(self.file))
                 # otherwise, ask user
                 errprint('=' * 60)
                 errprint('[?] Which column is this?')

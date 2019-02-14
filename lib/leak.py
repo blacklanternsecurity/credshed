@@ -56,11 +56,11 @@ class Account():
 
         if not ( (self.email or self.username) and (self.password or self.misc) ):
             # print(email, username, password, _hash, misc)
-            raise AccountCreationError('need either username or email and either a password or misc description:\n{}'.format(str(self)[:255]))
+            raise AccountCreationError('need either username or email and either a password or misc description:\n{}'.format(str(self)[:128]))
 
         for v in [self.email, self.username, self.password]:
             if len(v) >= 255:
-                raise AccountCreationError('Value {} is too long'.format(str(v)[2:-1][:255]))
+                raise AccountCreationError('Value {} is too long'.format(str(v)[2:-1][:128]))
 
 
     def document(self, id_only=False):
