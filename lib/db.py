@@ -65,29 +65,17 @@ class DB():
         #self.noshard_db = self.noshard_client['credshed']
         # accounts
         self.accounts = self.db.accounts
+        self.account_tags = self.db.account_tags
 
         #self.accounts.create_index([('id', pymongo.ASCENDING)])
         #self.accounts.create_index([('username', pymongo.ASCENDING)], sparse=True, background=True)
         #self.accounts.create_index([('domain', pymongo.ASCENDING)], sparse=True, background=True)
         #self.accounts.create_index([('password', pymongo.ASCENDING), ('username', pymongo.ASCENDING)], sparse=True, background=True)
-        #self.accounts.create_index([('email', pymongo.ASCENDING), ('password', pymongo.ASCENDING)], sparse=True, background=True)
 
-        # "warm up" the indexes (load them into memory)
-        # roughly equivalent to the "touch" db command in mmap
-        # https://grokbase.com/t/gg/mongodb-user/154qhs7402/warming-up-index-data-is-wiredtiger
-        # index_char_range = ['a','b','c','d','e','f','g','h','i','j','k','l','m','n','o','p','q','r','s','t','u','v','w','x','y','z','0','1','2','3','4','5','6','7','8','9']
-        # self.accounts.find({'email': {'$in': index_char_range }, 'password': {'$in': index_char_range } }).count()
-        # self.accounts.find({'domain': {'$in': index_char_range } }).count()
-        # self.accounts.find({'password': {'$in': index_char_range }, 'username': {'$in': index_char_range } }).count()
-        # self.accounts.find({'username': {'$in': index_char_range } }).count()
-        # self.db.command('touch', 'accounts', index=True)
         # sources
         self.sources = self.db.sources
         # counters
         self.counters = self.db.counters
-
-        ### REDIS ###
-        self.redis = redis.StrictRedis()
 
         # leak-specific counters
         self.leak_unique = 0
@@ -286,28 +274,27 @@ class DB():
 
         try:
 
-            # source_bytes = source_id.to_bytes(4, 'big')
-            for _id in self.redis.scan_iter('a:*'):
-                self.redis.srem(_id, source_id)
-                if not self.redis.exists(_id):
-                    to_delete.append(pymongo.DeleteOne({'_id': _id[2:].decode()}))
-                    #to_delete.append(_id[2:].decode())
-                    accounts_deleted += 1
-
-                if to_delete and accounts_deleted % batch_size == 0:
-                    #self.accounts.remove({'_id': {'$in': [d for d in to_delete]}})
-                    self.accounts.bulk_write([d for d in to_delete])
+            # delete accounts
+            for result in self.account_tags.find({'s': [source_id]}, {'_id': 1}):
+                to_delete.append(pymongo.DeleteOne(result))
+                if len(to_delete) % batch_size == 0:
+                    accounts_deleted += self.accounts.bulk_write(to_delete, ordered=False).deleted_count
                     to_delete.clear()
+                    errprint('\r[+] Deleted {:,} accounts'.format(accounts_deleted, end=''))
 
             if to_delete:
-                #self.accounts.remove({'_id': {'$in': [d for d in to_delete]}})
-                self.accounts.bulk_write([d for d in to_delete])
+                accounts_deleted += self.accounts.bulk_write(to_delete, ordered=False).deleted_count
 
+            # delete out of tags collection
+            self.account_tags.delete_many({'s': [source_id]})
+            # pull source ID from affected accounts
+            self.account_tags.update_many({'s': source_id}, {'$pull': {'s': source_id}})
 
-            #accounts_deleted = self.accounts.delete_many({'sources': [source_id]}).deleted_count
-            # self.accounts.update_many({'sources': {'$in': [source_id]}}, {'$pull': {'sources': source_id}})
-            self.sources.delete_one({'_id': source_id})
+            errprint('[+] Deleted {:,} accounts'.format(accounts_deleted))
+
+            self.sources.delete_many({'_id': source_id})
             self.counters.update_one({'collection': 'sources'}, {'$unset': {str(source_id): ''}})
+
 
         except TypeError as e:
             errprint(str(e))
@@ -451,7 +438,6 @@ class DB():
 
         errprint('[+] Worker started')
 
-        _redis = redis.StrictRedis()
         _mongo = pymongo.MongoClient('127.0.0.1', 27017)['credshed']
         unique_accounts = 0
 
@@ -460,7 +446,6 @@ class DB():
             with concurrent.futures.ThreadPoolExecutor() as thread_executor:
 
                 mthread = thread_executor.submit(self._mongo_add_batch, _mongo, source_id, copy.deepcopy(batch))
-                rthread = thread_executor.submit(self._redis_add_batch, _redis, source_id, batch)
 
                 thread_executor.shutdown(wait=True)
                 unique_accounts += mthread.result()
@@ -470,32 +455,27 @@ class DB():
         errprint('[+] Worker finished')
 
 
-
-    @staticmethod
-    def _redis_add_batch(_redis, source_id, batch):
-
-        for account_doc in batch:
-            _redis.sadd('a:' + account_doc['_id'], source_id)
-
-
     @staticmethod
     def _mongo_add_batch(_mongo, source_id, batch, max_attempts=3):
 
         unique_accounts = 0
         attempts_left = int(max_attempts)
         mongo_batch = []
+        mongo_tags_batch = []
 
         for account_doc in batch:
             _id = account_doc.pop('_id')
             # if "sources" array is stored in the document:
             #  db.accounts.update(account_doc, {'$addToSet': {'sources': source_id}}, upsert=True)
             mongo_batch.append(pymongo.UpdateOne({'_id': _id}, {'$setOnInsert': account_doc}, upsert=True))
+            mongo_tags_batch.append(pymongo.UpdateOne({'_id': _id}, {'$addToSet': {'s': source_id}}, upsert=True))
 
         while attempts_left > 0:
             try:
 
                 result = _mongo.accounts.bulk_write(mongo_batch, ordered=False)
                 _mongo.counters.update_one({'collection': 'sources'}, {'$inc': {str(source_id): len(mongo_batch)}}, upsert=True)
+                _mongo.account_tags.bulk_write(mongo_tags_batch, ordered=False)
                 unique_accounts = result.upserted_count
                 return unique_accounts
 

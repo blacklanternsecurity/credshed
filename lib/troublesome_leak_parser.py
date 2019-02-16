@@ -33,13 +33,15 @@ class ExploitIn(Leak):
                             email, password = line.split(b':')[:2]
                         elif b';' in line:
                             email, password = line.split(b';')[:2]
+                        else:
+                            continue
                     except ValueError:
                         sys.stderr.write('[!] Cannot translate line: {}\n'.format(str(line)[:64]))
                         continue
                     try:
                         yield Account(email=email, password=password)
                     except AccountCreationError as e:
-                        sys.stderr.write('[!] {}\n'.format(str(e)))
+                        sys.stderr.write('[!] {} {}\n'.format(str(e)), str(line))
                         continue
 
                     if counter % 1000 == 0:
