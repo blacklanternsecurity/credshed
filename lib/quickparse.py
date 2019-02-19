@@ -285,7 +285,7 @@ class QuickParse():
                 break
             # if semicolon is found before delimiter, replace it
             elif char == b';':
-                line = line.replace(b';', delimiter, 1)
+                line = line.replace(b';', delimiter, self.num_input_fields-1)
                 break
 
         return line.strip(b'\r\n').split(delimiter)
@@ -355,7 +355,8 @@ class QuickParse():
             # handle heckin' semicolons
             if char == b';':
                 heckin_semicolons += score
-                continue
+                char = b':'
+
             consistency_scores[char] = ( score, most_common_per_line_count )
 
         consistency_scores = list(consistency_scores.items())
@@ -439,7 +440,7 @@ class QuickParse():
             column = []
             for line in lines:
                 try:
-                    field = line.split(self.input_delimiter)[i]
+                    field = self._split_line(line)[i]
                     field = field.decode()
                     column.append(field)
                 except IndexError:
