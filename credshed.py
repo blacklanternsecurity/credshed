@@ -137,10 +137,19 @@ def main(options):
                 continue
 
             leak = Leak(q.source_name, q.source_hashtype, q.source_misc)
-            # make sure source doesn't already exist
-            #if db.sources.find_one(leak.source.document(misc=False)) is not None:
-            #    errprint('[!] Source already exists')
-            #    continue
+
+            # see if source already exists
+            source_already_in_db = db.sources.find_one(leak.source.document(misc=False, date=False))
+            if source_already_in_db:
+                if options.unattended:
+                    errprint('[!] Source ID {} ({}) already exists, skipping'.format(source_already_in_db['_id'], source_already_in_db['name']))
+                    continue
+                else:
+                    answer = input('Source ID {} ({}) already exists, merge? (Y/n)'.format(source_already_in_db['_id'], source_already_in_db['name'])) or 'y'
+                    if not answer.lower().startswith('y'):
+                        errprint('[*] Skipping existing source ID {} ({})'.format(source_already_in_db['_id'], source_already_in_db['name']))
+                        continue
+
 
             if options.no_deduplication:
                 leak.accounts = q.__iter__()

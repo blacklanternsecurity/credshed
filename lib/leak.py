@@ -73,9 +73,12 @@ class Account():
                 if self.email:
                     doc['email'], doc['domain'] = self.email.decode(encoding='utf-8').split('@')[:2]
                     doc['domain'] = doc['domain'][::-1]
-                if self.username: doc['username'] = self.username.decode(encoding='utf-8')
-                if self.password: doc['password'] = self.password.decode(encoding='utf-8')
-                if self.misc: doc['misc'] = self.misc.decode(encoding='utf-8')
+                if self.username:
+                    doc['username'] = self.username.decode(encoding='utf-8')
+                if self.password:
+                    doc['password'] = self.password.decode(encoding='utf-8')
+                if self.misc:
+                    doc['misc'] = self.misc.decode(encoding='utf-8')
 
         except UnicodeDecodeError as e:
             errprint('\n[!] Error decoding {}'.format(str(self.to_bytes())))

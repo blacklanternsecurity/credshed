@@ -64,7 +64,16 @@ class DB():
         self.db = self.client['credshed']
         #self.noshard_db = self.noshard_client['credshed']
         # accounts
+        try:
+            self.db.create_collection('accounts')
+        except pymongo.errors.CollectionInvalid:
+            pass
         self.accounts = self.db.accounts
+        # account metadata (associated leaks)
+        try:
+            self.db.create_collection('account_tags')
+        except pymongo.errors.CollectionInvalid:
+            pass
         self.account_tags = self.db.account_tags
 
         #self.accounts.create_index([('id', pymongo.ASCENDING)])
@@ -280,7 +289,7 @@ class DB():
                 if len(to_delete) % batch_size == 0:
                     accounts_deleted += self.accounts.bulk_write(to_delete, ordered=False).deleted_count
                     to_delete.clear()
-                    errprint('\r[+] Deleted {:,} accounts'.format(accounts_deleted, end=''))
+                    errprint('\r[+] Deleted {:,} accounts'.format(accounts_deleted), end='')
 
             if to_delete:
                 accounts_deleted += self.accounts.bulk_write(to_delete, ordered=False).deleted_count
@@ -312,7 +321,7 @@ class DB():
         source_in_db = self.sources.find_one(source_doc)
         if source_in_db is not None:
             source_id, source_name = source_in_db['_id'], source_in_db['name']
-            errprint('[*] Source ID {} ({}) already exists'.format(source_id, source_name))
+            errprint('[*] Source ID {} ({}) already exists, merging'.format(source_id, source_name))
             return source_id
             #assert False, 'Source already exists'
         else:
@@ -409,6 +418,8 @@ class DB():
         batch = []
         for account in leak:
             account_doc = account.document()
+            #print(account_doc)
+            #sleep(.25)
 
             if account_doc is not None:
                 batch.append(account_doc)
@@ -481,9 +492,9 @@ class DB():
 
             # sleep for a bit and try again if there's an error
             except (pymongo.errors.OperationFailure, pymongo.errors.InvalidOperation) as e:
-                errprint('\n[!] Error adding account batch.  Attempting to continue.\n{}'.format(str(e)))
+                errprint('\n[!] Error adding account batch.  Attempting to continue.\n{}'.format(str(e)[:64]))
                 try:
-                    errprint(e.details)
+                    errprint(str(e.details)[:64])
                 except:
                     pass
                 attempts_left -= 1
