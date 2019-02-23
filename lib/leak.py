@@ -23,9 +23,15 @@ class Account():
     # cut down on memory usage by not using a dictionary
     __slots__ = ['email', 'username', 'password', 'misc']
 
+    # for checking if string is an email
     email_regex = re.compile(r'^([a-zA-Z0-9_\-\.\+]+)@([a-zA-Z0-9_\-\.]+)\.([a-zA-Z]{2,8})$')
+    # same thing but for raw bytes
     email_regex_bytes = re.compile(rb'^([a-zA-Z0-9_\-\.\+]+)@([a-zA-Z0-9_\-\.]+)\.([a-zA-Z]{2,8})$')
+    # for searching for email in string
+    email_regex_search_bytes = re.compile(rb'([a-zA-Z0-9_\-\.\+]+)@([a-zA-Z0-9_\-\.]+)\.([a-zA-Z]{2,8})')
+    # less-strict version
     fuzzy_email_regex = re.compile(r'^(.+)@(.+)\.(.+)')
+    # same thing but for raw bytes
     fuzzy_email_regex_bytes = re.compile(rb'^(.+)@(.+)\.(.+)')
 
     def __init__(self, email=b'', username=b'', password=b'', _hash=b'', misc=b''):
@@ -59,8 +65,10 @@ class Account():
             raise AccountCreationError('need either username or email and either a password or misc description:\n{}'.format(str(self)[:128]))
 
         for v in [self.email, self.username, self.password]:
-            if len(v) >= 255:
+            if len(v) >= 128:
                 raise AccountCreationError('Value {} is too long'.format(str(v)[2:-1][:128]))
+        if len(self.misc) >= 256:
+            raise AccountCreationError('Value {} is too long'.format(str(v)[2:-1][:256]))
 
 
     def document(self, id_only=False):
@@ -101,7 +109,7 @@ class Account():
         username = self._if_key_exists(document, 'username')
         password = self._if_key_exists(document, 'password')
         misc = self._if_key_exists(document, 'misc')
-        return Account(email, username, password, misc)
+        return Account(email=email, username=username, password=password, misc=misc)
 
 
     @classmethod

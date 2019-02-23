@@ -31,7 +31,7 @@ class QuickParse():
     yields Account() objects
     '''
 
-    def __init__(self, file, source_name=None, unattended=False, preformatted=False, threshold=.7):
+    def __init__(self, file, source_name=None, unattended=False, preformatted=False, threshold=.65, strict=True):
 
         self.file = Path(file).resolve()
 
@@ -40,7 +40,6 @@ class QuickParse():
         else:
             self.source_name = str(source_name)
         
-
         self.source_hashtype = ''
 
         self.output_delimiter = b'\x00'
@@ -48,34 +47,40 @@ class QuickParse():
         self.num_input_fields = 2    # number of input fields, for edge case where password contains delimiter character
         self.password_field = 1      # used in combination with num_input_fields
         self.unattended = unattended # whether to parse files automatically
-        self.threshold = threshold   # if less than this percentage of lines don't comply, skip file
-
-        self.info_gathered = False
-
-        # email:username:password:misc
-        self.fields = {
-            'e': 0, # email
-            'u': 1, # username
-            'p': 2, # password
-            'h': 3, # hash
-            'm': 4  # misc
-        }
-
-        # input_position --> output_position
-        self.mapping = dict()
+        self.threshold = threshold   # this percentage of lines must comply to detected format
 
         # gather information about source
         self.gather_source_info(file)
 
-        if preformatted:
-            self.mapping[0] = self.fields['e']
-            self.mapping[1] = self.fields['u']
-            self.mapping[2] = self.fields['p']
-            self.mapping[3] = self.fields['m']
-            self.input_delimiter = b'\x00'
-            self.num_input_fields = 4
+        self.strict = strict
 
-        self.gather_info(skip_type_detection=preformatted)
+        if not self.strict:
+            self.info_gathered = True
+
+        else:
+            self.info_gathered = False
+
+            # email:username:password:misc
+            self.fields = {
+                'e': 0, # email
+                'u': 1, # username
+                'p': 2, # password
+                'h': 3, # hash
+                'm': 4  # misc
+            }
+
+            # input_position --> output_position
+            self.mapping = dict()
+
+            if preformatted:
+                self.mapping[0] = self.fields['e']
+                self.mapping[1] = self.fields['u']
+                self.mapping[2] = self.fields['p']
+                self.mapping[3] = self.fields['m']
+                self.input_delimiter = b'\x00'
+                self.num_input_fields = 4
+
+            self.gather_info(skip_type_detection=preformatted)
         
 
 
@@ -95,6 +100,7 @@ class QuickParse():
         # deduplicate, just in case file is smaller than num_lines
         all_lines = list(set(head + tail))
         self.input_delimiter = self._get_delimiter(all_lines)
+        errprint('[+] Detected delimiter: {}'.format(str(self.input_delimiter)))
 
         # confirm delimiter if not unattended
         if not self.unattended:
@@ -104,20 +110,20 @@ class QuickParse():
         # containing the delimiter character get parsed correctly
         try:
             split_lines = [self._split_line(line) for line in all_lines]
-            print(split_lines)
             self.num_input_fields = mode([len(split_line) for split_line in split_lines])
-            print(self.num_input_fields)
             #self.num_input_fields = mode([line.count(self.input_delimiter) for line in all_lines])
         except StatisticsError:
             self.num_input_fields = 0
+
+        errprint('[+] {} fields detected'.format(self.num_input_fields))
 
         if self.num_input_fields < 2:
             if self.unattended:
                 raise FieldDetectionError('not enough input fields detected')
             else:
-                self.num_input_fields = int(input('How many fields? > ')) or 2
-        else:
-            errprint('[+] {} fields detected'.format(self.num_input_fields))
+                self.num_input_fields = input('How many fields? > ') or 2
+                self.num_input_fields = int(self.num_input_fields)
+            
 
         # detect what type of data is in each field
         # weed out the easy stuff (emails, hashes, blank columns)
@@ -309,11 +315,31 @@ class QuickParse():
                 else:
                     line_new[self.mapping[p]] = line_old[p]
             except IndexError:
-                raise AccountCreationError('Index {} does not exist in {}'.format(p, str(line)))
+                raise AccountCreationError('Index {} does not exist in {}'.format(p, str(line)[:128]))
 
         else:
             email, username, password, _hash, misc = line_new
             return Account(email, username, password, _hash, misc)
+
+
+
+    def absorb_line(self, line):
+        '''
+        less-strict function that takes a line and looks for an email address
+        the rest of the line is placed in the "misc" field of the account
+        '''
+
+        email_match = Account.email_regex_search_bytes.search(line)
+
+        if email_match:
+            email = line[email_match.start():email_match.end()]
+
+            # strip out email and replace with "@"
+            # only use the last 255 characters
+            return Account(email=email, misc=line.replace(email, b'@')[-255:])
+
+        else:
+            raise AccountCreationError('No valid email in line: {}'.format(str(line)[:128]))
 
 
 
@@ -328,7 +354,13 @@ class QuickParse():
             line = lines[i]
             for j in range(len(line)):
                 char = line[j:j+1]
-                if not (char.isalnum() or char in [b'@', b'.', b'!', b'?', b'(', b')', b'-']):
+                if not (char.isalnum() or char in [b'@', b'.', b'!', b'?', b'(', b')', b'-', b'_']):
+
+                    # hackers are silly bois
+                    # so we just pretend all semicolons are colons
+                    if char == b';':
+                        char = b':'
+
                     try:
                         per_line_char_counts[char]
                     except KeyError:
@@ -337,9 +369,6 @@ class QuickParse():
                         per_line_char_counts[char][i] += 1
                     except KeyError:
                         per_line_char_counts[char][i] = 1
-
-        # hackers are silly bois
-        heckin_semicolons = 0
 
         # which characters have the most consistent line count?
         # consistency_scores: dictionary in the format:
@@ -352,10 +381,6 @@ class QuickParse():
                 score = num_occurrences.count(most_common_per_line_count)
             except StatisticsError:
                 continue
-            # handle heckin' semicolons
-            if char == b';':
-                heckin_semicolons += score
-                char = b':'
 
             consistency_scores[char] = ( score, most_common_per_line_count )
 
@@ -367,9 +392,6 @@ class QuickParse():
 
         try:
             best_delimiter, (score, per_line_count) = consistency_scores[0]
-            # just add the semicolon's score to whatever the top delimiter is
-            # it's handled later in translate_line()
-            score += heckin_semicolons
         except IndexError:
             raise DelimiterError('No delimiter candidates found in file "{}"'.format(self.file))
 
@@ -379,17 +401,18 @@ class QuickParse():
             if len(consistency_scores) > 1:
 
                 # handle a tie
-                ties = [ s for s in consistency_scores if s[1][0] == d0[1][0] and s[1][1] == d[1][1] ]
+                ties = [ s for s in consistency_scores if s[1][0] == d0[1][0] and s[1][1] == d0[1][1] ]
 
                 if len(ties) > 1:
                     ties_str = b'" "'.join([s[0] for s in ties])
                     raise DelimiterError('Multiple delimiter candidates: "{}" in file "{}"'.format(str(ties_str)[2:-1], self.file))
 
             # make sure most lines fit the detected format
-            if (score / len(lines)) < self.threshold:
-                raise DelimiterError('Inconsistent delimiter "{}" in file "{}"'.format(str(d0[0])[2:-1], self.file))
+            valid_lines = score / len(lines)
+            if valid_lines < self.threshold:
+                raise DelimiterError('Delimiter "{}"" ({:1f}%) failed threshold ({:.1f}%) in "{}"'.format(\
+                    str(d0[0])[2:-1], (valid_lines*100), self.threshold, self.file))
 
-        # return top character
         return best_delimiter
 
 
@@ -495,7 +518,10 @@ class QuickParse():
         with open(str(self.file), 'rb') as f:
             for line in f:
                 try:
-                    yield self.translate_line(line)
+                    if self.strict:
+                        yield self.translate_line(line)
+                    else:
+                        yield self.absorb_line(line)
                 except AccountCreationError as e:
                     errprint('[!] {}: {}'.format(str(e)[:128], str(line)[:128]))
                     continue

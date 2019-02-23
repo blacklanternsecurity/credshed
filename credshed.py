@@ -128,9 +128,12 @@ def main(options):
 
             except QuickParseError as e:
                 e = '[!] {}'.format(str(e))
-                errprint('\n' + e)
+                e2 = '[*] Falling back to non-strict mode'
+                errprint(e)
+                errprint(e2)
+                q = QuickParse(file=leak_file, source_name=leak_friendly_name, unattended=options.unattended, strict=False)
                 errors.append(e)
-                continue
+                errors.append(e2)
 
             except KeyboardInterrupt:
                 errprint('\n[*] Skipping {}'.format(str(file)))
@@ -141,10 +144,7 @@ def main(options):
             # see if source already exists
             source_already_in_db = db.sources.find_one(leak.source.document(misc=False, date=False))
             if source_already_in_db:
-                if options.unattended:
-                    errprint('[!] Source ID {} ({}) already exists, skipping'.format(source_already_in_db['_id'], source_already_in_db['name']))
-                    continue
-                else:
+                if not options.unattended:
                     answer = input('Source ID {} ({}) already exists, merge? (Y/n)'.format(source_already_in_db['_id'], source_already_in_db['name'])) or 'y'
                     if not answer.lower().startswith('y'):
                         errprint('[*] Skipping existing source ID {} ({})'.format(source_already_in_db['_id'], source_already_in_db['name']))
