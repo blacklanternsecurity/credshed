@@ -151,7 +151,7 @@ class DB():
 
 
 
-    def add_leak(self, leak, num_threads=2):
+    def add_leak(self, leak, num_threads=4):
         '''
         benchmarks for adding 1M accounts:
             (best average: ~62,500 per second)
@@ -289,7 +289,7 @@ class DB():
                 if len(to_delete) % batch_size == 0:
                     accounts_deleted += self.accounts.bulk_write(to_delete, ordered=False).deleted_count
                     to_delete.clear()
-                    errprint('\r[+] Deleted {:,} accounts'.format(accounts_deleted), end='')
+                    errprint('\n[+] Deleted {:,} accounts'.format(accounts_deleted), end='')
 
             if to_delete:
                 accounts_deleted += self.accounts.bulk_write(to_delete, ordered=False).deleted_count
@@ -407,10 +407,10 @@ class DB():
     def get_source(self, _id):
 
         s = self.sources.find_one({'_id': int(_id)})
-        #try:
-        return Source(s['name'], s['hashtype'], s['misc'], s['date'])
-        #except (TypeError, KeyError):
-        #    return None
+        try:
+            return Source(s['name'], s['hashtype'], s['misc'])
+        except (TypeError, KeyError):
+            return None
 
 
     def _gen_batches(self, leak, source_id, batch_size=10000):

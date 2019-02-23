@@ -66,9 +66,9 @@ class Account():
 
         for v in [self.email, self.username, self.password]:
             if len(v) >= 128:
-                raise AccountCreationError('Value {} is too long'.format(str(v)[2:-1][:128]))
-        if len(self.misc) >= 256:
-            raise AccountCreationError('Value {} is too long'.format(str(v)[2:-1][:256]))
+                raise AccountCreationError('Value too long: {}'.format(str(v)[2:-1][:64]))
+        if len(self.misc) >= 512:
+            raise AccountCreationError('Value too long: {}'.format(str(v)[2:-1][:64]))
 
 
     def document(self, id_only=False):

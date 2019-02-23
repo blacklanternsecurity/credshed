@@ -31,7 +31,7 @@ class QuickParse():
     yields Account() objects
     '''
 
-    def __init__(self, file, source_name=None, unattended=False, preformatted=False, threshold=.65, strict=True):
+    def __init__(self, file, source_name=None, unattended=False, preformatted=False, threshold=.75, strict=True):
 
         self.file = Path(file).resolve()
 
@@ -142,14 +142,15 @@ class QuickParse():
                 unknown_fields = []
 
             elif len(unknown_fields) == 2:
-                self.password_field = unknown_fields[1]
-                errprint('[+] Assuming usernames in column #{}'.format(unknown_fields[0]+1))
-                self.mapping[unknown_fields[0]] = self.fields['u']
-                errprint('[+] Assuming passwords in column #{}'.format(unknown_fields[1]+1))
-                self.mapping[unknown_fields[1]] = self.fields['p']
-                unknown_fields = []
+                if not any(x in self.mapping.values() for x in [self.fields['e'], self.fields['u']]):
+                    self.password_field = unknown_fields[1]
+                    errprint('[+] Assuming usernames in column #{}'.format(unknown_fields[0]+1))
+                    self.mapping[unknown_fields[0]] = self.fields['u']
+                    errprint('[+] Assuming passwords in column #{}'.format(unknown_fields[1]+1))
+                    self.mapping[unknown_fields[1]] = self.fields['p']
+                    unknown_fields = []
 
-            elif self.unattended:
+            if self.unattended and unknown_fields:
                 # die alone, in the dark
                 raise FieldDetectionError('Unknown column in {}'.format(self.file))
 
@@ -300,7 +301,8 @@ class QuickParse():
 
     def translate_line(self, line):
         '''
-        converts each line to an Account() object
+        polite and picky function which takes a line and maps its fields exactly as self.mapping declares
+        returns an Account() object
         '''
 
         line_old = self._split_line(line)
@@ -325,8 +327,9 @@ class QuickParse():
 
     def absorb_line(self, line):
         '''
-        less-strict function that takes a line and looks for an email address
-        the rest of the line is placed in the "misc" field of the account
+        needy function which takes a line and looks for an email address
+        the rest of the line is placed in the "misc" field
+        returns an Account() object
         '''
 
         email_match = Account.email_regex_search_bytes.search(line)
@@ -523,5 +526,5 @@ class QuickParse():
                     else:
                         yield self.absorb_line(line)
                 except AccountCreationError as e:
-                    errprint('[!] {}: {}'.format(str(e)[:128], str(line)[:128]))
+                    errprint('[!] {}: {}'.format(str(e), str(line)[:64]))
                     continue

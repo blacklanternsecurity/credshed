@@ -203,11 +203,16 @@ def main(options):
                 if to_delete:
                     errprint('\nDeleting all entries from:\n\t{}'.format('\n\t'.join(to_delete.values())), end='\n\n')
                     if not input('OK? [Y/n] ').lower().startswith('n'):
-                        for source_id in to_delete:
-                            start_time = datetime.now()
-                            db.remove_leak(source_id)
-                            end_time = datetime.now()
-                            time_elapsed = (end_time - start_time)
+                        start_time = datetime.now()
+                        with concurrent.futures.ThreadPoolExecutor(max_workers=cpu_count()) as executor:
+                            for source_id in to_delete:
+                                
+                                executor.submit(db.remove_leak, source_id)
+                        
+                            executor.shutdown(wait=True)
+
+                        end_time = datetime.now()
+                        time_elapsed = (end_time - start_time)                                
                 else:
                     errprint('[!] No valid leaks specified were specified for deletion')
 
