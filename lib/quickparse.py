@@ -31,7 +31,7 @@ class QuickParse():
     yields Account() objects
     '''
 
-    def __init__(self, file, source_name=None, unattended=False, preformatted=False, threshold=.75, strict=True):
+    def __init__(self, file, source_name=None, unattended=False, threshold=.75, strict=True):
 
         self.file = Path(file).resolve()
 
@@ -72,15 +72,7 @@ class QuickParse():
             # input_position --> output_position
             self.mapping = dict()
 
-            if preformatted:
-                self.mapping[0] = self.fields['e']
-                self.mapping[1] = self.fields['u']
-                self.mapping[2] = self.fields['p']
-                self.mapping[3] = self.fields['m']
-                self.input_delimiter = b'\x00'
-                self.num_input_fields = 4
-
-            self.gather_info(skip_type_detection=preformatted)
+            self.gather_info()
         
 
 
@@ -123,6 +115,17 @@ class QuickParse():
             else:
                 self.num_input_fields = input('How many fields? > ') or 2
                 self.num_input_fields = int(self.num_input_fields)
+
+        elif self.num_input_fields == 4 and self.input_delimiter == b'\x00':
+            skip_type_detection = True
+
+            # assume file is pre-formatted
+            self.mapping[0] = self.fields['e']
+            self.mapping[1] = self.fields['u']
+            self.mapping[2] = self.fields['p']
+            self.mapping[3] = self.fields['m']
+            self.input_delimiter = b'\x00'
+            self.num_input_fields = 4
             
 
         # detect what type of data is in each field
@@ -132,23 +135,33 @@ class QuickParse():
         if skip_type_detection:
             unknown_fields = []
 
+        # if there are unknown fields, try and figure the rest out
         if unknown_fields:
 
-            # try and figure the rest out
+            # if 
             if len(unknown_fields) == 1:
-                errprint('[+] Assuming passwords in column #{}'.format(unknown_fields[0]+1))
-                self.password_field = unknown_fields[0]
-                self.mapping[unknown_fields[0]] = self.fields['p']
-                unknown_fields = []
-
-            elif len(unknown_fields) == 2:
-                if not any(x in self.mapping.values() for x in [self.fields['e'], self.fields['u']]):
-                    self.password_field = unknown_fields[1]
+                # if we've already found hashes
+                if any([x in self.mapping.values() for x in [self.fields['h']]]):
+                    # assume usernames
                     errprint('[+] Assuming usernames in column #{}'.format(unknown_fields[0]+1))
                     self.mapping[unknown_fields[0]] = self.fields['u']
-                    errprint('[+] Assuming passwords in column #{}'.format(unknown_fields[1]+1))
-                    self.mapping[unknown_fields[1]] = self.fields['p']
                     unknown_fields = []
+
+                # otherwise, assume passwords
+                else:
+                    errprint('[+] Assuming passwords in column #{}'.format(unknown_fields[0]+1))
+                    self.password_field = unknown_fields[0]
+                    self.mapping[unknown_fields[0]] = self.fields['p']
+                    unknown_fields = []
+
+            # if we haven't mapped email or usernames yet, and there's two unknown fields
+            elif len(unknown_fields) == 2 and not any([x in self.mapping.values() for x in [self.fields['e'], self.fields['u']]]):
+                self.password_field = unknown_fields[1]
+                errprint('[+] Assuming usernames in column #{}'.format(unknown_fields[0]+1))
+                self.mapping[unknown_fields[0]] = self.fields['u']
+                errprint('[+] Assuming passwords in column #{}'.format(unknown_fields[1]+1))
+                self.mapping[unknown_fields[1]] = self.fields['p']
+                unknown_fields = []
 
             if self.unattended and unknown_fields:
                 # die alone, in the dark
@@ -301,21 +314,21 @@ class QuickParse():
 
     def translate_line(self, line):
         '''
-        polite and picky function which takes a line and maps its fields exactly as self.mapping declares
+        polite and picky function which takes a line and maps its fields exactly declared in self.mapping
         returns an Account() object
         '''
 
         line_old = self._split_line(line)
-        len_diff = len(line) - self.num_input_fields
+        #len_diff = len(line) - self.num_input_fields
         line_new = [b''] * 5
 
         for p in self.mapping:
             try:
-                if len_diff and p == self.password_field:
-                    # handle edge case where password contains delimiter character
-                    line_new[self.mapping[p]] = self.input_delimiter.join(line_old[p:p+len_diff+1])
-                else:
-                    line_new[self.mapping[p]] = line_old[p]
+                #if len_diff and p == self.password_field:
+                #    # handle edge case where password contains delimiter character
+                #    line_new[self.mapping[p]] = self.input_delimiter.join(line_old[p:p+len_diff+1])
+                #else:
+                line_new[self.mapping[p]] = line_old[p]
             except IndexError:
                 raise AccountCreationError('Index {} does not exist in {}'.format(p, str(line)[:128]))
 
@@ -327,7 +340,7 @@ class QuickParse():
 
     def absorb_line(self, line):
         '''
-        needy function which takes a line and looks for an email address
+        sloppy function which takes a line and looks for an email address
         the rest of the line is placed in the "misc" field
         returns an Account() object
         '''
@@ -336,13 +349,15 @@ class QuickParse():
 
         if email_match:
             email = line[email_match.start():email_match.end()]
-
             # strip out email and replace with "@"
-            # only use the last 255 characters
-            return Account(email=email, misc=line.replace(email, b'@')[-255:])
+            line = line.replace(email, b'@')
+            if len(line) > 2:
+                # only use the last 511 characters
+                return Account(email=email, misc=line[-511:])
+            else:
+                raise AccountCreationError('Not enough content in line: {}'.format(str(line)[:128]))
 
-        else:
-            raise AccountCreationError('No valid email in line: {}'.format(str(line)[:128]))
+        raise AccountCreationError('No valid email in line: {}'.format(str(line)[:128]))
 
 
 
@@ -413,7 +428,7 @@ class QuickParse():
             # make sure most lines fit the detected format
             valid_lines = score / len(lines)
             if valid_lines < self.threshold:
-                raise DelimiterError('Delimiter "{}"" ({:1f}%) failed threshold ({:.1f}%) in "{}"'.format(\
+                raise DelimiterError('Delimiter "{}"" ({:.1f}%) failed threshold ({:.2f}%) in "{}"'.format(\
                     str(d0[0])[2:-1], (valid_lines*100), self.threshold, self.file))
 
         return best_delimiter
@@ -502,7 +517,7 @@ class QuickParse():
             else:
                 # skip columns containing numeric values like UIDs, dates, IP addresses, SSNs, etc.
                 # skip columns containing NULL
-                skip_chars = ['0123456789-.:_ ']
+                skip_chars = ['0123456789-.:_/ \t']
                 if ( [all([char in string.digits for char in field]) for field in column].count(True)/len(lines) > self.threshold ) and \
                 not ([field.upper() == 'NULL' for field in column].count(True)/len(lines) > self.threshold ):
                     errprint('[+] Skipping numeric field')

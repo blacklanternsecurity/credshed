@@ -107,7 +107,7 @@ clean()
 
 delete_db()
 {
-	to_delete=( "$mongo_dir_0" "$mongo_dir_1" "$mongo_standalone_dir" "$redis_dir" "$elast_dir" )
+	to_delete=( "$mongo_main_dir" "$mongo_meta_dir" )
 
 	kill_dock
 	printf '\n[!] DELETING THESE DIRECTORIES - PRESS CTRL+C TO CANCEL\n\n'
@@ -137,27 +137,19 @@ delete_db()
 create_dirs()
 {
 
-	if [ ! -d "$mongo_dir_0" ]
-	then
-		sudo mkdir -p "$mongo_dir_0"
-		sudo chown 231999:231999 "$mongo_dir_0"
-		sudo chmod 770 "$mongo_dir_0"
-	fi
-	if [ ! -d "$srv_dir" ]
+	mongo_dirs=( "$mongo_main_dir" "$mongo_meta_dir" )
+	for mongo_dir in "${to_delete[@]}"
+	do
+		if [ -n "$mongo_dir" -a ! -d "$mongo_dir" ]
+		then
+			sudo mkdir -p "$mongo_dir"
+			sudo chown 231999:231999 "$mongo_dir"
+			sudo chmod 770 "$mongo_dir"
+		fi
+	done
+	if [ -n "$srv_dir" -a ! -d "$srv_dir" ]
 	then
 		sudo mkdir -p "$srv_dir"
-	fi
-	if [ ! -d "$redis_dir" ]
-	then
-		sudo mkdir -p "$redis_dir"
-		sudo chown 231999:231999 "$redis_dir"
-		sudo chmod 770 "$redis_dir"
-	fi
-	if [ ! -d "$elast_dir" ]
-	then
-		sudo mkdir -p "$elast_dir"
-		sudo chown 231000:231000 "$elast_dir"
-		sudo chmod 770 "$elast_dir"
 	fi
 
 }

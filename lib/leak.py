@@ -60,15 +60,18 @@ class Account():
         else:
             self.password = password
 
-        if not ( (self.email or self.username) and (self.password or self.misc) ):
+        # keeping a username or email by itself is sometimes useful
+        # if not strictly for OSINT purposes, at least knowing which leaks it was a part of
+        # allows searching for additional information in the raw dump
+        if not (self.email or self.username): # and (self.password or self.misc) ):
             # print(email, username, password, _hash, misc)
-            raise AccountCreationError('need either username or email and either a password or misc description:\n{}'.format(str(self)[:128]))
+            raise AccountCreationError('Must have either username or email:\n{}'.format(str(self)[:128]))
 
         for v in [self.email, self.username, self.password]:
             if len(v) >= 128:
                 raise AccountCreationError('Value too long: {}'.format(str(v)[2:-1][:64]))
         if len(self.misc) >= 512:
-            raise AccountCreationError('Value too long: {}'.format(str(v)[2:-1][:64]))
+            raise AccountCreationError('Description too long: {}'.format(str(v)[2:-1][:64]))
 
 
     def document(self, id_only=False):

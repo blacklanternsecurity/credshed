@@ -2,12 +2,34 @@ version: '3'
 
 services:
 
-  ## MongoDB
-  mongo:
+  ## MongoDB main DB
+  mongo_main:
     image: mongo
     command: mongod --bind_ip_all --setParameter maxIndexBuildMemoryUsageMegabytes=32000 --setParameter diagnosticDataCollectionEnabled=false
     # --wiredTigerCacheSizeGB 150
     ports:
       - "127.0.0.1:27017:27017"
     volumes:
-      - $mongo_dir_0:/data/db:delegated
+      - $mongo_main_dir:/data/db:delegated
+    ulimits:
+      nproc: 65535
+      nofile:
+        soft: 100000
+        hard: 200000
+
+
+
+  ## MongoDB for account metadata
+  mongo_meta:
+    image: mongo
+    command: mongod --bind_ip_all --setParameter maxIndexBuildMemoryUsageMegabytes=32000 --setParameter diagnosticDataCollectionEnabled=false
+    # --wiredTigerCacheSizeGB 150
+    ports:
+      - "127.0.0.1:27018:27017"
+    volumes:
+      - $mongo_meta_dir:/data/db:delegated
+    ulimits:
+      nproc: 65535
+      nofile:
+        soft: 100000
+        hard: 200000
