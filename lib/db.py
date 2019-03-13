@@ -61,8 +61,11 @@ class DB():
 
     def find(self, keywords, password=False, misc=False):
         '''
-        ~ 2 minutes to regex-search 100M-entry DB
+        ~ 2 minutes to regex-search non-indexed 100M-entry DB
         '''
+
+        if type(keywords) == str:
+            keywords = [keywords,]
 
         results = dict()
 
@@ -91,24 +94,31 @@ class DB():
             '''
 
 
-            try:
+            if Account.is_email(keyword):
+                errprint('[+] Searching by email')
                 email, domain = keyword.lower().split('@')[:2]
                 domain_keyword = base64.b64encode(sha1(b'.'.join(domain.lower().encode().split(b'.')[-2:])).digest()).decode()[:6]
-                domain_regex = r'^{}.*'.format(domain_keyword).replace('+', r'\+')
-                errprint('[+] Searching by full email')
-                query = {'$and': [{'email': email}, {'_id': {'$regex': domain_regex}}]}
-                #errprint(query)
+                query_regex = r'^{}.*'.format(domain_keyword).replace('+', r'\+')
+                query = {'$and': [{'email': email}, {'_id': {'$regex': query_regex}}]}
                 results['emails'] = self.accounts.find(query)
                 #results['emails'] = self.accounts.find({'email': email, '_id': {'$regex': domain_regex}})
                 #results['emails'] = self.accounts.find({'email': email})
-            except ValueError:
+
+            elif re.compile(r'^([a-zA-Z0-9_\-\.]+)\.([a-zA-Z]{2,8})$').match(keyword):
+                errprint('[+] Searching by domain')
                 domain = keyword.lower()
                 domain_keyword = base64.b64encode(sha1(b'.'.join(keyword.lower().encode().split(b'.')[-2:])).digest()).decode()[:6]
-                domain_regex = r'^{}.*'.format(domain_keyword).replace('+', r'\+')
-                errprint('[+] Searching by domain')
-                query = {'_id': {'$regex': domain_regex}}
+                query_regex = r'^{}.*'.format(domain_keyword).replace('+', r'\+')
+                query = {'_id': {'$regex': query_regex}}
                 #errprint(query)
                 results['emails'] = self.accounts.find(query)
+
+            else:
+                errprint('[+] Searching by username')
+                query_regex = r'^{}.*'.format(keyword).replace('+', r'\+')
+                query = {'username': {'$regex': query_regex}}
+                #errprint(query)
+                results['usernames'] = self.accounts.find(query)
 
             for category in results:
                 for result in results[category]:
@@ -351,23 +361,24 @@ class DB():
         return id_counter
 
 
-    def show_stats(self, accounts=False, counters=False, sources=True, db=False):
+    def stats(self, accounts=False, counters=False, sources=True, db=False):
         '''
         prints database statistics
         returns most recently added source ID, if applicable
         '''
 
         most_recent_source_id = 0
+        stats = []
 
         try:
 
             if accounts:
                 accounts_stats = self.main_db.command('collstats', 'accounts', scale=1048576)
-                errprint('[+] Account Stats (MB):')
+                stats.append('[+] Account Stats (MB):')
                 for k in accounts_stats:
                     if k not in ['wiredTiger', 'indexDetails', 'shards', 'raw']:
-                        errprint('\t{}: {}'.format(k, accounts_stats[k]))
-            errprint()
+                        stats.append('\t{}: {}'.format(k, accounts_stats[k]))
+            stats.append('')
 
             '''
             if counters:
@@ -387,28 +398,53 @@ class DB():
                     sources_stats[s['_id']] = Source(s['name'], s['hashtype'], s['misc'])
 
                 if sources_stats:
-                    errprint('[+] Leaks in DB:')
+                    stats.append('[+] Leaks in DB:')
                     for _id in sources_stats:
                         source = sources_stats[_id]
                         try:
                             source_size = ' [{:,}]'.format(self.counters.find_one({'collection': 'sources'})[str(_id)])
                         except KeyError:
                             source_size = ''
-                        most_recent_source_id = _id
 
-                        errprint('\t{}: {}{}'.format(_id, str(source), source_size))
-                    errprint()
+                        stats.append('\t{}: {}{}'.format(_id, str(source), source_size))
+                    stats.append('')
 
         except pymongo.errors.OperationFailure:
-            errprint('[!] No accounts added yet', end='\n\n')
+            stats.append('[!] No accounts added yet', end='\n\n')
 
         if db:
             db_stats = self.main_db.command('dbstats', scale=1048576)
-            errprint('[+] DB Stats (MB):')
+            stats.append('[+] DB Stats (MB):')
             for k in db_stats:
-                errprint('\t{}: {}'.format(k, db_stats[k]))
+                stats.append('\t{}: {}'.format(k, db_stats[k]))
 
-        return most_recent_source_id
+        return '\n'.join(stats)
+
+
+
+    def most_recent_source_id(self):
+        '''
+        returns source with highest ID
+        or None if there are no leaks loaded
+        '''
+
+        source_ids = [s['_id'] for s in list(self.sources.find({}, {'_id': True}))]
+        if source_ids:
+            source_ids.sort()
+            return source_ids[-1]
+        else:
+            return None
+
+
+
+    def account_count(self):
+
+        try:
+            num_accounts_in_db = self.main_db.command('collstats', 'accounts', scale=1048576)['count']
+        except KeyError:
+            num_accounts_in_db = 0
+
+        return int(num_accounts_in_db)
 
 
     def get_source(self, _id):

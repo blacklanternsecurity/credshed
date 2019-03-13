@@ -1,22 +1,12 @@
 #!/usr/bin/env python3.7
 
-'''
-TODO:
-    - prompt user for confirmation (with first / last 10 files and total count)
-'''
-
 import os
-import sys
-import argparse
-from lib.db import DB
-from lib.leak import *
+from .db import DB
+from .leak import *
 from time import sleep
-from pathlib import Path
-from lib.quickparse import *
+from .quickparse import *
 from datetime import datetime
 from multiprocessing import cpu_count
-
-
 
 
 def number_range(s):
@@ -43,54 +33,41 @@ def number_range(s):
 
 
 
-
 class CredShed():
 
-    def __init__(self, output='__db__', unattended=False, deduplication=False):
+    def __init__(self, output='__db__', unattended=False, deduplication=False, threads=2):
 
         self.db = DB()
+        self.threads = threads
         self.output = Path(output)
         self.unattended = unattended
         self.deduplication = deduplication
 
         self.errors = []
 
-        # if we're outputting to a file instead of the DB
-        if not str(output) == '__db__':
-            # validate output destination
-            self.output = self.output.resolve()
-            assert not self.output.is_dir(), 'Creation of {} is blocked'.format(self.output)
-            if self.output.exists():
-                errprint('[!] Overwriting {} - CTRL+C to cancel'.format(self.output))
-                sleep(5)
-            with open(str(self.output), 'w') as f:
-                f.write('')
+        # overwrite output file
+        with open(str(self.output), 'w') as f:
+            f.write('')
 
 
-
-    def search(self, query):
+    def _search(self, query):
         '''
-        query = search string
+        query = search string(s)
+        yields Account objects
         '''
 
-        start_time = datetime.now()
-        num_results = 0
+        if type(query) == str:
+            query = [query]
 
-        for result in self.db.find(str(query)):
-            num_results += 1
-            #print('{}:{}@{}:{}:{}'.format(result['username'], result['email'], result['domain'], result['password'], result['misc']))
-            print(result)
-
-        end_time = datetime.now()
-        time_elapsed = (end_time - start_time)
-        errprint('\n[+] Total Results: {:,}'.format(num_results))
-        errprint('[+] Time Elapsed: {}\n'.format(str(time_elapsed)[:-4]))
+        for query in query:
+            for result in self.db.find(str(query)):
+                #print('{}:{}@{}:{}:{}'.format(result['username'], result['email'], result['domain'], result['password'], result['misc']))
+                yield result
 
 
+    def _stats(self):
 
-    def stats(self):
-
-        self.db.show_stats(accounts=True, counters=True, sources=True, db=True)
+        return self.db.stats(accounts=True, counters=True, sources=True, db=True)
 
 
 
@@ -117,35 +94,19 @@ class CredShed():
         # if we're importing a lot of files, parallelize
         if len(to_add) > 1 and self.unattended and str(self.output) == '__db__':
             file_threads = 4
-            options.threads = max(2, min(12, int(options.threads / file_threads)+1))
-            errprint('[+] {:,} files detected, adding in parallel ({} threads + {} per file)'.format(len(to_add), file_threads, options.threads))
+            self.threads = max(2, min(12, int(self.threads / file_threads)+1))
+            errprint('[+] {:,} files detected, adding in parallel ({} threads + {} per file)'.format(len(to_add), file_threads, self.threads))
 
             futures = []
 
-            #with concurrent.futures.ThreadPoolExecutor(max_workers=file_threads) as file_thread_executor:
-
             file_thread_executor = concurrent.futures.ThreadPoolExecutor(max_workers=file_threads)
-            #with concurrent.futures.ProcessPoolExecutor(max_workers=file_threads) as file_thread_executor:
-            #with concurrent.futures.ThreadPoolExecutor(max_workers=file_threads) as file_thread_executor:
-            #for result in file_thread_executor.map(lambda a: add_leak(*a), [(l, options) for l in to_add]):
-            #    #errprint('[+] Job finished')
-            #    errprint(result)
             for l in to_add:
                 futures.append(file_thread_executor.submit(self._add_by_file, l))
-
-            '''
-            try:
-                file_thread_executor.shutdown(wait=True)
-            except KeyboardInterrupt:
-                errprint('[!] Shutting down threads forcefully')
-                for future in futures:
-                    future.cancel()
-            '''
 
             completed = 0
             for future in concurrent.futures.as_completed(futures):
                 completed += 1
-                print('\n>> {:,} FILES COMPLETED <<\n'.format(completed))
+                errprint('\n>> {:,} FILES COMPLETED <<\n'.format(completed))
 
             file_thread_executor.shutdown(wait=False)
 
@@ -154,7 +115,7 @@ class CredShed():
                 self._add_by_file(l)
 
 
-        if options.unattended and self.errors:
+        if self.unattended and self.errors:
             errprint('Errors encountered:\n\t', end='')
             errprint('\n\t'.join(self.errors))
 
@@ -173,24 +134,28 @@ class CredShed():
                         to_delete[source_id] = str(source_id) + ': ' + str(source_info)
 
                 if to_delete:
-                    errprint('\nDeleting all entries from:\n\t{}'.format('\n\t'.join(to_delete.values())), end='\n\n')
+                    print('\nDeleting all entries from:\n\t{}'.format('\n\t'.join(to_delete.values())), end='\n\n')
                     if not input('OK? [Y/n] ').lower().startswith('n'):
                         start_time = datetime.now()
-                        with concurrent.futures.ThreadPoolExecutor(max_workers=cpu_count()) as executor:
+
+                        # disabling threads, since concurrent deletion of leaks
+                        # leaves leftover accounts
+                        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
                             for source_id in to_delete:
                                 executor.submit(self.db.remove_leak, source_id)
 
                         end_time = datetime.now()
                         time_elapsed = (end_time - start_time)                                
                 else:
-                    errprint('[!] No valid leaks specified were specified for deletion')
+                    print('[!] No valid leaks specified were specified for deletion')
 
             else:
 
                 while True:
 
                     assert self.db.sources.estimated_document_count() > 0, 'No more leaks in DB'
-                    most_recent_source_id = self.db.show_stats()
+                    print(self.db.stats())
+                    most_recent_source_id = self.db.most_recent_source_id()
 
                     try:
                         to_delete = int(input('Enter ID to delete [{}] (CTRL+C when finished): '.format(most_recent_source_id)) or most_recent_source_id)
@@ -205,10 +170,10 @@ class CredShed():
                         self.db.remove_leak(to_delete)
                         end_time = datetime.now()
                         time_elapsed = (end_time - start_time)
-                        errprint('\n[+] Time Elapsed: {}\n'.format(str(time_elapsed).split('.')[0]))
+                        print('\n[+] Time Elapsed: {}\n'.format(str(time_elapsed).split('.')[0]))
 
         except KeyboardInterrupt:
-            errprint('\n[*] Deletion cancelled')
+            print('\n[*] Deletion cancelled')
 
 
 
@@ -292,7 +257,7 @@ class CredShed():
                 #print('\nAdding:\n{}'.format(str(leak)))
                 #file_thread_executor.submit(db.add_leak, leak, num_threads=options.threads)
                 #errprint('[{}] Calling db.add_leak()'.format(dir_and_file))
-                db.add_leak(leak, num_threads=options.threads)
+                db.add_leak(leak, num_threads=self.threads)
                 #errprint('[{}] Finished calling db.add_leak()'.format(dir_and_file))
 
             else:
@@ -350,81 +315,3 @@ class CredShed():
             for dir_name, dir_list, file_list in os.walk(d):
                 for file in file_list:
                     yield (d.parent, (Path(dir_name) / file).relative_to(d.parent))
-
-
-
-
-
-
-def main(options):
-
-    cred_shed = CredShed(output=options.out, unattended=options.unattended, deduplication=options.deduplication)
-
-
-    # if we're importing stuff
-    try:
-        if options.add:
-            cred_shed.import_files(options.add)
-
-        elif options.delete_leak is not None:
-            cred_shed.delete_leaks(options.delete_leak)
-
-        if options.search:
-            cred_shed.search(options.search)
-
-        if options.stats:
-            cred_shed.stats()
-
-    finally:
-        # close mongodb connection
-        cred_shed.db.close()
-        
-
-
-
-
-if __name__ == '__main__':
-
-    parser = argparse.ArgumentParser()
-    # 2 <= threads <= 12
-    default_threads = max(2, min(12, (int(cpu_count()/1.5)+1)))
-
-    parser.add_argument('search',                       nargs='*',                      help='search term(s)')
-    parser.add_argument('-a', '--add',      type=Path,  nargs='+',                      help='add file(s) to DB')
-    parser.add_argument('-t', '--stats',    action='store_true',                        help='show db stats')
-    parser.add_argument('-o', '--out',      type=Path,  default='__db__',               help='write output to file instead of DB')
-    parser.add_argument('-d', '--delete-leak',          nargs='*',                      help='delete leak(s) from DB, e.g. "1-3,5,7-9"')
-    parser.add_argument('-dd', '--deduplication',       action='store_true',            help='deduplicate accounts ahead of time (may eat memory)')
-    parser.add_argument('-p', '--search-passwords',     action='store_true',            help='search by password')
-    parser.add_argument('-m', '--search-description',   action='store_true',            help='search by description / misc')
-    parser.add_argument('--threads',        type=int,   default=default_threads,        help='number of threads for import operations')
-    parser.add_argument('-u', '--unattended',           action='store_true',            help='auto-detect import fields without user interaction')
-
-    try:
-
-        if len(sys.argv) < 2:
-            parser.print_help()
-            exit(0)
-
-        options = parser.parse_args()
-        #print(options.delete_leak)
-        #exit(1)
-
-        main(options)
-
-    except argparse.ArgumentError as e:
-        errprint('\n\n[!] {}\n[!] Check your syntax'.format(str(e)))
-        exit(2)
-
-    except (KeyboardInterrupt, BrokenPipeError):
-        errprint('\n\n[!] Interrupted')
-        exit(1)
-
-    except AssertionError as e:
-        errprint('\n\n[!] {}'.format(str(e)))
-
-    finally:
-        try:
-            outfile.close()
-        except:
-            pass

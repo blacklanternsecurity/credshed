@@ -32,6 +32,9 @@ start_daemon()
 		echo "dockremap:231000:65536" | sudo tee /etc/subgid >/dev/null 2>&1
 	fi
 
+	# cache sudo privileges to prevent script from dying
+	sudo echo -n ''
+
 	if ! pgrep dockerd >/dev/null
 	then
 		printf '[+] Starting daemon\n'
