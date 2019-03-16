@@ -1,5 +1,7 @@
 #!/usr/bin/env python3.7
 
+# by TheTechromancer
+
 import random
 import string
 from .db import *
@@ -330,7 +332,7 @@ class QuickParse():
                 #else:
                 line_new[self.mapping[p]] = line_old[p]
             except IndexError:
-                raise AccountCreationError('Index {} does not exist in {}'.format(p, str(line)[:128]))
+                raise AccountCreationError('Index {} does not exist in {}'.format(p, str(line)[:64]))
 
         else:
             email, username, password, _hash, misc = line_new
@@ -355,9 +357,9 @@ class QuickParse():
                 # only use the last 511 characters
                 return Account(email=email, misc=line[-511:])
             else:
-                raise AccountCreationError('Not enough content in line: {}'.format(str(line)[:128]))
+                raise AccountCreationError('Not enough content in line: {}'.format(str(line)[:64]))
 
-        raise AccountCreationError('No valid email in line: {}'.format(str(line)[:128]))
+        raise AccountCreationError('No valid email in line: {}'.format(str(line)[:64]))
 
 
 

@@ -1,4 +1,6 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python3.7
+
+# by TheTechromancer
 
 import sys
 import argparse

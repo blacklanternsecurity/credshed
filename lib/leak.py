@@ -1,5 +1,7 @@
 #!/usr/bin/env python3.7
 
+# by TheTechromancer
+
 import re
 import sys
 import base64
@@ -92,10 +94,10 @@ class Account():
                     doc['misc'] = self.misc.decode(encoding='utf-8')
 
         except UnicodeDecodeError as e:
-            errprint('\n[!] Error decoding {}'.format(str(self.to_bytes())))
+            errprint('[!] Error decoding {}'.format(str(self.to_bytes())[:64]))
             return None
         except ValueError:
-            errprint('\n[!] Error formatting {}'.format(str(self.to_bytes())))
+            errprint('[!] Error formatting {}'.format(str(self.to_bytes())[:64]))
 
         return doc
 

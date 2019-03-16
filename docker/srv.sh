@@ -1,5 +1,7 @@
 #!/bin/bash
 
+# by TheTechromancer
+
 . ./.env
 
 usage()

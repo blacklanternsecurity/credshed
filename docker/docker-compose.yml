@@ -5,8 +5,7 @@ services:
   ## MongoDB main DB
   mongo_main:
     image: mongo
-    command: mongod --bind_ip_all --setParameter maxIndexBuildMemoryUsageMegabytes=32000 --setParameter diagnosticDataCollectionEnabled=false
-    # --wiredTigerCacheSizeGB 150
+    command: mongod --bind_ip_all --setParameter maxIndexBuildMemoryUsageMegabytes=32000 --setParameter diagnosticDataCollectionEnabled=false --wiredTigerCacheSizeGB 20
     ports:
       - "127.0.0.1:27017:27017"
     volumes:
@@ -22,8 +21,7 @@ services:
   ## MongoDB for account metadata
   mongo_meta:
     image: mongo
-    command: mongod --bind_ip_all --setParameter maxIndexBuildMemoryUsageMegabytes=32000 --setParameter diagnosticDataCollectionEnabled=false
-    # --wiredTigerCacheSizeGB 150
+    command: mongod --bind_ip_all --setParameter maxIndexBuildMemoryUsageMegabytes=32000 --setParameter diagnosticDataCollectionEnabled=false --wiredTigerCacheSizeGB 20
     ports:
       - "127.0.0.1:27018:27017"
     volumes:

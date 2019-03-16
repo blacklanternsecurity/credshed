@@ -1,5 +1,7 @@
 #!/usr/bin/env python3.7
 
+# by TheTechromancer
+
 import copy
 import time
 import queue
@@ -192,6 +194,7 @@ class DB():
                 (675,470 per minute)
         '''
 
+        pool = []
         try:
 
             errprint('[+] Adding leak')
@@ -209,7 +212,6 @@ class DB():
             comms_queue = multiprocessing.Queue(num_threads*10)
 
             # square one
-            pool = []
             for thread_id in range(num_threads):
                 while 1:
                     p = multiprocessing.Process(target=self._add_batches, args=(batch_queue, result_queue, comms_queue, source_id), daemon=True)
@@ -267,10 +269,6 @@ class DB():
             for error in errors:
                 errprint(error)
 
-            # let the bodies hit the floor
-            for p in pool:
-                p.terminate()
-
             end_time = time.time()
             time_elapsed = (end_time - start_time)
 
@@ -286,6 +284,13 @@ class DB():
             self.leak_unique = 0
             self.leak_overall = 0
             self.leak_size = 0
+            # let the bodies hit the floor
+            for p in pool:
+                p.terminate()
+                sleep(.1)
+                p.kill()
+                sleep(.1)
+                p.close()
 
 
     def remove_leak(self, source_id, batch_size=10000):
@@ -482,18 +487,17 @@ class DB():
 
     def _add_batches(self, batch_queue, result_queue, comms_queue, source_id):
 
-        comms_queue.put(True)
-        sleep(1)
-
-        max_attempts = 3
-
-        mongo_main_client = pymongo.MongoClient('127.0.0.1', 27017)
-        mongo_meta_client = pymongo.MongoClient('127.0.0.1', 27018)
-        mongo_main = mongo_main_client['credshed']
-        mongo_meta = mongo_meta_client['credshed']
-        unique_accounts = 0
-
         try:
+            comms_queue.put(True)
+            sleep(1)
+
+            max_attempts = 3
+
+            mongo_main_client = pymongo.MongoClient('127.0.0.1', 27017)
+            mongo_meta_client = pymongo.MongoClient('127.0.0.1', 27018)
+            mongo_main = mongo_main_client['credshed']
+            mongo_meta = mongo_meta_client['credshed']
+            unique_accounts = 0
 
             while 1:
                 try:
@@ -521,8 +525,11 @@ class DB():
                             unique_accounts += num_inserted
 
                 except queue.Empty:
-                    sleep(.1)
-                    continue
+                    try:
+                        sleep(.1)
+                        continue
+                    except KeyboardInterrupt:
+                        break
 
         except Exception as e:
             comms_queue.put('Error in _add_batches()\n'.format(str(e)))
@@ -558,7 +565,7 @@ class DB():
             except (pymongo.errors.OperationFailure, pymongo.errors.InvalidOperation) as e:
                 #errprint('\n[!] Error adding account batch to main DB.  Attempting to continue.\n{}'.format(str(e)[:64]))
                 try:
-                    errprint(str(e.details)[:64])
+                    errprint(str(e.details)[:80])
                 except AttributeError:
                     pass
                 attempts_left -= 1

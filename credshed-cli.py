@@ -1,5 +1,7 @@
 #!/usr/bin/env python3.7
 
+# by TheTechromancer
+
 '''
 TODO:
     - when importing, prompt user for confirmation (with first / last 10 files and total count)
@@ -27,7 +29,7 @@ class CredShedCLI(CredShed):
                 errprint('[!] Overwriting {} - CTRL+C to cancel'.format(self.output))
                 sleep(5)
 
-        super().__init__(unattended=unattended)
+        super().__init__(unattended=unattended, deduplication=deduplication, threads=threads)
 
 
     def search(self, query):
@@ -43,7 +45,7 @@ class CredShedCLI(CredShed):
         end_time = datetime.now()
         time_elapsed = (end_time - start_time)
         print('\n[+] Searched {:,} accounts in {} seconds'.format(num_accounts_in_db, str(time_elapsed)[:-4]))
-        print('[+] {:,} results for "{}"'.format(num_results, str(query)))
+        print('[+] {:,} results for "{}"'.format(num_results, '|'.join(query)))
 
 
     def stats(self):
@@ -81,7 +83,9 @@ if __name__ == '__main__':
 
     parser = argparse.ArgumentParser()
     # 2 <= threads <= 12
-    default_threads = max(2, min(12, (int(cpu_count()/1.5)+1)))
+    num_cores = cpu_count()
+    #default_threads = max(2, min(12, (int(num_cores/1.5)+1)))
+    default_threads = int(num_cores)
 
     parser.add_argument('search',                       nargs='*',                      help='search term(s)')
     parser.add_argument('-a', '--add',      type=Path,  nargs='+',                      help='add file(s) to DB')

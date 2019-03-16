@@ -1,5 +1,28 @@
 #!/usr/bin/env python3.7
 
+# by TheTechromancer
+
+# to fix:
+# threads seem to stay alive after finishing
+'''
+    user@h1:~/reverse_ssh$ pstree | grep pyth                                                                                                                                                     
+            |-python3.7---2*[{python3.7}]                                                                                                                                                         
+                           |      |-python3.7-+-2*[head]                                                                                                                                          
+                           |      |           |-17*[python3.7---6*[{python3.7}]]                                                                                                                  
+                           |      |           |-5*[python3.7---7*[{python3.7}]]
+                           |      |           `-284*[{python3.7}]
+    user@h1:~/reverse_ssh$ pstree | grep pyth
+            |-python3.7---2*[{python3.7}]                                       
+                           |      |-python3.7-+-16*[python3.7---6*[{python3.7}]]
+                           |      |           |-8*[python3.7---7*[{python3.7}]]
+                           |      |           `-385*[{python3.7}]
+    user@h1:~/reverse_ssh$ pstree | grep pyth
+            |-python3.7---2*[{python3.7}]
+                           |      |-python3.7-+-21*[python3.7---6*[{python3.7}]]
+                           |      |           |-3*[python3.7---7*[{python3.7}]]
+                           |      |           `-427*[{python3.7}]
+'''
+
 import os
 from .db import DB
 from .leak import *
@@ -93,22 +116,27 @@ class CredShed():
 
         # if we're importing a lot of files, parallelize
         if len(to_add) > 1 and self.unattended and str(self.output) == '__db__':
-            file_threads = 4
-            self.threads = max(2, min(12, int(self.threads / file_threads)+1))
-            errprint('[+] {:,} files detected, adding in parallel ({} threads + {} per file)'.format(len(to_add), file_threads, self.threads))
+            file_threads = int(self.threads*1.5)
+            self.threads = 1
+            errprint('[+] {:,} files detected, adding in parallel ({} threads, 1 process per file)'.format(len(to_add), file_threads))
 
             futures = []
 
             file_thread_executor = concurrent.futures.ThreadPoolExecutor(max_workers=file_threads)
-            for l in to_add:
-                futures.append(file_thread_executor.submit(self._add_by_file, l))
+            try:
+                for l in to_add:
+                    futures.append(file_thread_executor.submit(self._add_by_file, l))
 
-            completed = 0
-            for future in concurrent.futures.as_completed(futures):
-                completed += 1
-                errprint('\n>> {:,} FILES COMPLETED <<\n'.format(completed))
+                completed = 0
+                for future in concurrent.futures.as_completed(futures):
+                    completed += 1
+                    errprint('\n>> {:,} FILES COMPLETED <<\n'.format(completed))
 
-            file_thread_executor.shutdown(wait=False)
+            except KeyboardInterrupt:
+                for future in futures:
+                    future.cancel()
+            finally:
+                file_thread_executor.shutdown(wait=False)
 
         else:
             for l in to_add:
