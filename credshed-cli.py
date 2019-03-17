@@ -9,8 +9,8 @@ TODO:
 
 import sys
 import argparse
+from lib.core import *
 from pathlib import Path
-from lib.credshed import *
 from datetime import datetime
 from multiprocessing import cpu_count
 
@@ -56,8 +56,11 @@ class CredShedCLI(CredShed):
 
 def main(options):
 
-    cred_shed = CredShedCLI(output=options.out, unattended=options.unattended, deduplication=options.deduplication, threads=options.threads)
-
+    try:
+        cred_shed = CredShedCLI(output=options.out, unattended=options.unattended, deduplication=options.deduplication, threads=options.threads)
+    except CredShedError as e:
+        stderr.write('[!] {}\n'.format(str(e)))
+        sys.exit(1)
 
     # if we're importing stuff
     try:
@@ -72,6 +75,13 @@ def main(options):
 
         if options.stats:
             cred_shed.stats()
+
+    except CredShedError as e:
+        sys.stderr.write('[!] {}'.format(str(e)))
+
+    except KeyboardInterrupt:
+        sys.stderr.write('[!] CredShed Interrupted\n')
+        return
 
     finally:
         # close mongodb connection
@@ -114,9 +124,9 @@ if __name__ == '__main__':
         errprint('\n\n[!] {}\n[!] Check your syntax'.format(str(e)))
         exit(2)
 
-    except (KeyboardInterrupt, BrokenPipeError):
-        errprint('\n\n[!] Interrupted')
-        exit(1)
+    #except (KeyboardInterrupt, BrokenPipeError):
+    #    errprint('\n\n[!] Interrupted')
+    #    exit(1)
 
     except AssertionError as e:
         errprint('\n\n[!] {}'.format(str(e)))

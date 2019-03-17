@@ -94,7 +94,7 @@ class QuickParse():
         # deduplicate, just in case file is smaller than num_lines
         all_lines = list(set(head + tail))
         self.input_delimiter = self._get_delimiter(all_lines)
-        errprint('[+] Detected delimiter: {}'.format(str(self.input_delimiter)))
+        self._adaptive_print('[+] Detected delimiter: {}'.format(str(self.input_delimiter)))
 
         # confirm delimiter if not unattended
         if not self.unattended:
@@ -109,7 +109,7 @@ class QuickParse():
         except StatisticsError:
             self.num_input_fields = 0
 
-        errprint('[+] {} fields detected'.format(self.num_input_fields))
+        self._adaptive_print('[+] {} fields detected'.format(self.num_input_fields))
 
         if self.num_input_fields < 2:
             if self.unattended:
@@ -145,13 +145,13 @@ class QuickParse():
                 # if we've already found hashes
                 if any([x in self.mapping.values() for x in [self.fields['h']]]):
                     # assume usernames
-                    errprint('[+] Assuming usernames in column #{}'.format(unknown_fields[0]+1))
+                    self._adaptive_print('[+] Assuming usernames in column #{}'.format(unknown_fields[0]+1))
                     self.mapping[unknown_fields[0]] = self.fields['u']
                     unknown_fields = []
 
                 # otherwise, assume passwords
                 else:
-                    errprint('[+] Assuming passwords in column #{}'.format(unknown_fields[0]+1))
+                    self._adaptive_print('[+] Assuming passwords in column #{}'.format(unknown_fields[0]+1))
                     self.password_field = unknown_fields[0]
                     self.mapping[unknown_fields[0]] = self.fields['p']
                     unknown_fields = []
@@ -159,9 +159,9 @@ class QuickParse():
             # if we haven't mapped email or usernames yet, and there's two unknown fields
             elif len(unknown_fields) == 2 and not any([x in self.mapping.values() for x in [self.fields['e'], self.fields['u']]]):
                 self.password_field = unknown_fields[1]
-                errprint('[+] Assuming usernames in column #{}'.format(unknown_fields[0]+1))
+                self._adaptive_print('[+] Assuming usernames in column #{}'.format(unknown_fields[0]+1))
                 self.mapping[unknown_fields[0]] = self.fields['u']
-                errprint('[+] Assuming passwords in column #{}'.format(unknown_fields[1]+1))
+                self._adaptive_print('[+] Assuming passwords in column #{}'.format(unknown_fields[1]+1))
                 self.mapping[unknown_fields[1]] = self.fields['p']
                 unknown_fields = []
 
@@ -175,18 +175,18 @@ class QuickParse():
             for i in unknown_fields:
                 column = columns[i]
                 if all([field == '' for field in column]):
-                    errprint('[+] Skipping blank column')
+                    self._adaptive_print('[+] Skipping blank column')
                     continue
 
                 sample_len = 20
                 for f in random.sample(column, len(column)):
                     if f:
-                        errprint('  {}'.format(f))
+                        self._adaptive_print('  {}'.format(f))
                         sample_len -= 1
                     if sample_len <= 0:
                         break
 
-                #errprint('  ' + '\n  '.join(random.sample(column, 20)))
+                #self._adaptive_print('  ' + '\n  '.join(random.sample(column, 20)))
 
                 # assume last field is password if email/username is already mapped
                 #if auto:
@@ -203,26 +203,26 @@ class QuickParse():
                 if self.unattended:
                     raise FieldDetectionError('Unknown column in {}'.format(self.file))
                 # otherwise, ask user
-                errprint('=' * 60)
-                errprint('[?] Which column is this?')
-                errprint('=' * 60)
+                self._adaptive_print('=' * 60)
+                self._adaptive_print('[?] Which column is this?')
+                self._adaptive_print('=' * 60)
                 field = input('[E]mail | [U]ser | [P]assword | [H]ash | [M]isc | [enter] to skip > ').strip().lower()
                 if any([field.startswith(f) for f in self.fields.keys()]):
                     self.mapping[i] = self.fields[field[0]]
                     if field == 'p':
                         self.password_field = i
                 elif not field:
-                    errprint('[*] Skipped')
+                    self._adaptive_print('[*] Skipped')
                     continue
                 else:
-                    errprint('[!] Please try again')
+                    self._adaptive_print('[!] Please try again')
                     sleep(1)
 
             # must have at least two fields
             if not (any([i in self.mapping.values() for i in (self.fields['u'], self.fields['e'])]) and \
                 any([i in self.mapping.values() for i in (self.fields['p'], self.fields['h'], self.fields['m'])])):
                 #raise ValueError('Not enough fields mapped in {}'.format(file))
-                errprint('[!] Not enough fields mapped')
+                self._adaptive_print('[!] Not enough fields mapped')
                 self.mapping.clear()
                 unknown_fields = list(range(self.num_input_fields))
                 continue
@@ -232,31 +232,31 @@ class QuickParse():
                 try:
                     translated_lines.append(str(self.translate_line(line)))
                 except AccountCreationError as e:
-                    #errprint('[!] {}: {}'.format(str(e), str(line)))
+                    #self._adaptive_print('[!] {}: {}'.format(str(e), str(line)))
                     continue
 
             # display and confirm selection
-            errprint(('=' * 60))
-            errprint('email:username:password:misc/description')
-            errprint('=' * 60)
+            self._adaptive_print(('=' * 60))
+            self._adaptive_print('email:username:password:misc/description')
+            self._adaptive_print('=' * 60)
             for _ in range(min(20, len(translated_lines))):
                 line = random.choice(translated_lines)
                 translated_lines.remove(line)
                 #try:
-                errprint(' ' + line)
-                #    #errprint(line.decode().replace(self.output_delimiter.decode(), ':'))
+                self._adaptive_print(' ' + line)
+                #    #self._adaptive_print(line.decode().replace(self.output_delimiter.decode(), ':'))
                 #except UnicodeDecodeError:
                 #    continue
-            errprint('=' * 60)
+            self._adaptive_print('=' * 60)
 
             if self.unattended:
-                errprint('[+] Unattended parsing of {} was successful\n'.format(self.file))
+                self._adaptive_print('[+] Unattended parsing of {} was successful\n'.format(self.file))
                 self.info_gathered = True
             else:
                 for in_index in self.mapping:
                     for i in self.fields.items():
                         if self.mapping[in_index] == i[1]:
-                            print('Column #{} -> {}'.format(in_index+1, i[0]))
+                            self._adaptive_print('Column #{} -> {}'.format(in_index+1, i[0]))
                 if not input('\nOK? [Y/n] ').lower().startswith('n'):
                     self.info_gathered = True
                 else:
@@ -282,13 +282,13 @@ class QuickParse():
         #    self.source_name, self.source_hashtype = ('unknown', 'unknown')
 
         #finally:
-        errprint('=' * 60)
-        errprint(' ' + str(self.file))
-        errprint('=' * 60)
+        self._adaptive_print('=' * 60)
+        self._adaptive_print(' ' + str(self.file))
+        self._adaptive_print('=' * 60)
         if self.unattended:
-            errprint('Source name:         {}'.format(self.source_name))
-            errprint('Source hashtype:     {}'.format(self.source_hashtype))
-            errprint('Source description:  {}'.format(self.source_misc))
+            self._adaptive_print('Source name:         {}'.format(self.source_name))
+            self._adaptive_print('Source hashtype:     {}'.format(self.source_hashtype))
+            self._adaptive_print('Source description:  {}'.format(self.source_misc))
         else:
             self.source_name = input('Source name: [{}] '.format(self.source_name)) or self.source_name
             self.source_hashtype = input('Source hashtype: [{}] '.format(self.source_hashtype)) or self.source_hashtype
@@ -441,12 +441,12 @@ class QuickParse():
 
         # print 20 random lines
         l = [_ for _ in lines]
-        errprint('\n' + '=' * 60)
+        self._adaptive_print('\n' + '=' * 60)
         for _ in range(min(20, len(lines))):
             rand_choice = random.choice(l)
             l.remove(rand_choice)
-            print(' ' + str(rand_choice)[2:-1])
-        errprint('=' * 60)
+            self._adaptive_print(' ' + str(rand_choice)[2:-1])
+        self._adaptive_print('=' * 60)
         self.input_delimiter = input('Delimiter [{}] > '.format(str(self.input_delimiter)[2:-1])).encode() or self.input_delimiter
 
         # handle case where delimiter is hexidecimal
@@ -469,7 +469,7 @@ class QuickParse():
 
             self.input_delimiter = new_delimiter
 
-        errprint('[+] Using delimiter: {}'.format(str(self.input_delimiter)))
+        self._adaptive_print('[+] Using delimiter: {}'.format(str(self.input_delimiter)))
 
 
 
@@ -503,7 +503,7 @@ class QuickParse():
             # detect emails
             num_emails = [Account.is_fuzzy_email(field) for field in column].count(True)
             if num_emails > int(.75 * len(lines)) and not self.fields['e'] in self.mapping.values():
-                errprint('[+] Detected emails in column #{}'.format(i+1))
+                self._adaptive_print('[+] Detected emails in column #{}'.format(i+1))
                 self.mapping[i] = self.fields['e']
 
             # detect hashes
@@ -513,7 +513,7 @@ class QuickParse():
             elif random_field_length >= 12 and \
                 [len(field) == random_field_length for field in column_no_blanks].count(True)/len(column_no_blanks) > self.threshold and \
                 [all([char.lower() in 'abcdef0123456789' for char in field]) for field in column_no_blanks].count(True)/len(column_no_blanks) > self.threshold:
-                    errprint('[+] Detected hashes in column #{}'.format(i+1))
+                    self._adaptive_print('[+] Detected hashes in column #{}'.format(i+1))
                     self.mapping[i] = self.fields['h']
 
             else:
@@ -522,13 +522,23 @@ class QuickParse():
                 skip_chars = ['0123456789-.:_/ \t']
                 if ( [all([char in string.digits for char in field]) for field in column].count(True)/len(lines) > self.threshold ) and \
                 not ([field.upper() == 'NULL' for field in column].count(True)/len(lines) > self.threshold ):
-                    errprint('[+] Skipping numeric field')
+                    self._adaptive_print('[+] Skipping numeric field')
                 else:
                     unknown_fields.append(i)
 
             columns[i] = column
 
         return (columns, unknown_fields)
+
+
+
+    def _adaptive_print(self, *s, end='\n'):
+        '''
+        prints if self.unattended is False
+        '''
+        s = [str(_) for _ in s]
+        if not self.unattended:
+            sys.stderr.write(' '.join(s) + end)
 
 
 
@@ -543,5 +553,5 @@ class QuickParse():
                     else:
                         yield self.absorb_line(line)
                 except AccountCreationError as e:
-                    errprint('[!] {}: {}'.format(str(e), str(line)[:64]))
+                    self._adaptive_print('[!] {}: {}'.format(str(e), str(line)[:64]))
                     continue

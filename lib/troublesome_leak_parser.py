@@ -4,7 +4,7 @@
 
 import sys
 import argparse
-from leak import *
+from .leak import *
 
 
 class ExploitIn(Leak):

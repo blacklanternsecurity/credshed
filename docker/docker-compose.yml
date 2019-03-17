@@ -1,3 +1,5 @@
+# by TheTechromancer
+
 version: '3'
 
 services:
@@ -5,6 +7,7 @@ services:
   ## MongoDB main DB
   mongo_main:
     image: mongo
+    # feel free to change hard-coded memory limits to match your hardware requirements
     command: mongod --bind_ip_all --setParameter maxIndexBuildMemoryUsageMegabytes=32000 --setParameter diagnosticDataCollectionEnabled=false --wiredTigerCacheSizeGB 20
     ports:
       - "127.0.0.1:27017:27017"
@@ -21,6 +24,7 @@ services:
   ## MongoDB for account metadata
   mongo_meta:
     image: mongo
+    # feel free to change hard-coded memory limits to match your hardware requirements
     command: mongod --bind_ip_all --setParameter maxIndexBuildMemoryUsageMegabytes=32000 --setParameter diagnosticDataCollectionEnabled=false --wiredTigerCacheSizeGB 20
     ports:
       - "127.0.0.1:27018:27017"

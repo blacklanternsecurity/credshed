@@ -197,8 +197,8 @@ class DB():
         pool = []
         try:
 
-            errprint('[+] Adding leak')
-            errprint('[+] Using {} threads'.format(num_threads))
+            #errprint('[+] Adding leak')
+            #errprint('[+] Using {} threads'.format(num_threads))
 
             try:
                 self.leak_size = len(leak)
@@ -223,11 +223,11 @@ class DB():
                     try:
                         comms_queue.get_nowait()
                         pool.append(p)
-                        errprint('[+] Worker started')
+                        #errprint('[+] Worker started')
                         #errprint('[+] Thread {} started successfully'.format(thread_id))
                         break
                     except queue.Empty:
-                        errprint('[+] Thread {} failed to start, terminating'.format(thread_id))
+                        #errprint('[+] Thread {} failed to start, terminating'.format(thread_id))
                         p.terminate()
                         continue
 
@@ -246,7 +246,7 @@ class DB():
                 try:
                     new_accounts = result_queue.get_nowait()
                     if new_accounts is None:
-                        errprint('[+] Worker finished')
+                        #errprint('[+] Worker finished')
                         threads_finished += 1
                         if threads_finished == num_threads:
                             break
@@ -266,18 +266,21 @@ class DB():
                     errors.append(comms_queue.get_nowait())
                 except queue.Empty:
                     break
-            for error in errors:
-                errprint(error)
+            #for error in errors:
+            #    errprint(error)
 
             end_time = time.time()
             time_elapsed = (end_time - start_time)
 
+            import_result = ''
             if self.leak_overall > 0:
-                errprint('\n[+] Total Accounts: {:,}'.format(self.leak_overall))
-                errprint('[+] Unique Accounts: {:,} ({:.1f}%)'.format(self.leak_unique, ((self.leak_unique/self.leak_overall)*100)))
-                errprint('[+] Time Elapsed: {} hours, {} minutes, {} seconds\n'.format(int(time_elapsed/3600), int((time_elapsed%3600)/60), int((time_elapsed%3600)%60)))
+                import_result += '[+] Total Accounts: {:,}\n'.format(self.leak_overall)
+                import_result += '[+] Unique Accounts: {:,} ({:.1f}%)\n'.format(self.leak_unique, ((self.leak_unique/self.leak_overall)*100))
+                import_result += '[+] Time Elapsed: {} hours, {} minutes, {} seconds\n'.format(int(time_elapsed/3600), int((time_elapsed%3600)/60), int((time_elapsed%3600)%60))
             if errors:
-                errprint('[!] Errors:\n     {}'.format('\n     '.join(errors)))
+                import_result += '[!] Errors:\n     {}'.format('\n     '.join(errors))
+
+            return import_result
 
         finally:
             # reset leak counters
@@ -299,12 +302,11 @@ class DB():
         accounts_deleted = 0
         to_delete = []
 
-        errprint('[*] Deleting leak "{}{}"'.format(source.name, ':{}'.format(source.hashtype) if source.hashtype else ''))
+        errprint('\n[*] Deleting leak "{}{}"'.format(source.name, ':{}'.format(source.hashtype) if source.hashtype else ''))
 
         try:
 
             # delete accounts
-            errprint()
             for result in self.account_tags.find({'s': [source_id]}, {'_id': 1}):
                 to_delete.append(pymongo.DeleteOne(result))
                 if len(to_delete) % batch_size == 0:
@@ -487,17 +489,17 @@ class DB():
 
     def _add_batches(self, batch_queue, result_queue, comms_queue, source_id):
 
+        max_attempts = 3
+
+        mongo_main_client = pymongo.MongoClient('127.0.0.1', 27017)
+        mongo_meta_client = pymongo.MongoClient('127.0.0.1', 27018)
+        mongo_main = mongo_main_client['credshed']
+        mongo_meta = mongo_meta_client['credshed']
+        unique_accounts = 0
+
         try:
             comms_queue.put(True)
             sleep(1)
-
-            max_attempts = 3
-
-            mongo_main_client = pymongo.MongoClient('127.0.0.1', 27017)
-            mongo_meta_client = pymongo.MongoClient('127.0.0.1', 27018)
-            mongo_main = mongo_main_client['credshed']
-            mongo_meta = mongo_meta_client['credshed']
-            unique_accounts = 0
 
             while 1:
                 try:
@@ -508,6 +510,7 @@ class DB():
                     if batch is None:
                         break
                     else:
+                        '''
                         timeout_value = (int(len(batch) / 500)) + (5 * max_attempts) + 1
                         try:
                             with concurrent.futures.ThreadPoolExecutor(max_workers=2) as thread_executor:
@@ -518,28 +521,41 @@ class DB():
                             num_inserted = main_thread.result(timeout=timeout_value)
 
                         except concurrent.futures.TimeoutError:
-                            comms_queue.put('"main" mongodb thread timed out after {:,} seconds'.format(timeout_value))
+                            #comms_queue.put('"main" mongodb thread timed out after {:,} seconds'.format(timeout_value))
                             continue
 
                         finally:
                             unique_accounts += num_inserted
+                        '''
+
+                        num_inserted = self._mongo_main_add_batch(mongo_main, source_id, copy.deepcopy(batch))
+                        self._mongo_meta_add_batch(mongo_meta, source_id, batch)
+
+                        unique_accounts += num_inserted
+
 
                 except queue.Empty:
-                    try:
-                        sleep(.1)
-                        continue
-                    except KeyboardInterrupt:
-                        break
+                    sleep(.1)
+                    continue
+
+        except KeyboardInterrupt:
+            #comms_queue.put('_add_batches() interrupted\n')
+            return
 
         except Exception as e:
-            comms_queue.put('Error in _add_batches()\n'.format(str(e)))
+            #comms_queue.put('Error in _add_batches()\n'.format(str(e)))
+            return
 
         finally:
-            mongo_main_client.close()
-            mongo_meta_client.close()
-            result_queue.put(unique_accounts)
-            # send signal that thread is finished
-            result_queue.put(None)
+            try:
+                #mongo_main_client.close()
+                #mongo_meta_client.close()
+                result_queue.put(unique_accounts)
+                # send signal that thread is finished
+                result_queue.put(None)
+            except:
+                pass
+
 
 
 
@@ -572,7 +588,7 @@ class DB():
                 sleep(5)
                 continue
 
-        errprint('\n[!] Failed to add batch to main DB after {} tries'.format(max_attempts))
+        #errprint('\n[!] Failed to add batch to main DB after {} tries'.format(max_attempts))
 
 
     @staticmethod
@@ -594,12 +610,12 @@ class DB():
             # sleep for a bit and try again if there's an error
             except (pymongo.errors.OperationFailure, pymongo.errors.InvalidOperation) as e:
                 #errprint('\n[!] Error adding account batch to meta DB.  Attempting to continue.\n{}'.format(str(e)[:64]))
-                try:
-                    errprint(str(e.details)[:64])
-                except AttributeError:
-                    pass
+                #try:
+                #    errprint(str(e.details)[:64])
+                #except AttributeError:
+                #    pass
                 attempts_left -= 1
                 sleep(5)
                 continue
 
-        errprint('\n[!] Failed to add batch to meta DB after {} tries'.format(max_attempts))
+        #errprint('\n[!] Failed to add batch to meta DB after {} tries'.format(max_attempts))
