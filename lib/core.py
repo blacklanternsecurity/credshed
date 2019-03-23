@@ -144,7 +144,7 @@ class CredShed():
         threading.Thread(target=self._tail_comms_queue, daemon=True).start()
 
 
-    def _search(self, query):
+    def search(self, query):
         '''
         query = search string(s)
         yields Account objects
@@ -163,7 +163,7 @@ class CredShed():
                 raise CredShedError('Error querying MongoDB: {}'.format(str(e)))
 
 
-    def _stats(self):
+    def stats(self):
 
         return self.db.stats(accounts=True, counters=True, sources=True, db=True)
 

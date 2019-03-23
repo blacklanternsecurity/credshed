@@ -32,13 +32,13 @@ class CredShedCLI(CredShed):
         super().__init__(unattended=unattended, deduplication=deduplication, threads=threads)
 
 
-    def search(self, query):
+    def _search(self, query):
 
         start_time = datetime.now()
         num_accounts_in_db = self.db.account_count()
 
         num_results = 0
-        for result in self._search(query):
+        for result in self.search(query):
             print(result)
             num_results += 1
 
@@ -48,9 +48,9 @@ class CredShedCLI(CredShed):
         print('[+] {:,} results for "{}"'.format(num_results, '|'.join(query)))
 
 
-    def stats(self):
+    def _stats(self):
 
-        print(self._stats())
+        print(self.stats())
 
 
 
@@ -71,10 +71,10 @@ def main(options):
             cred_shed.delete_leaks(options.delete_leak)
 
         if options.search:
-            cred_shed.search(options.search)
+            cred_shed._search(options.search)
 
         if options.stats:
-            cred_shed.stats()
+            cred_shed._stats()
 
     except CredShedError as e:
         sys.stderr.write('[!] {}'.format(str(e)))
@@ -101,7 +101,7 @@ if __name__ == '__main__':
     parser.add_argument('-a', '--add',      type=Path,  nargs='+',                      help='add file(s) to DB')
     parser.add_argument('-t', '--stats',    action='store_true',                        help='show db stats')
     parser.add_argument('-o', '--out',      type=Path,  default='__db__',               help='write output to file instead of DB')
-    parser.add_argument('-d', '--delete-leak',          nargs='*',                      help='delete leak(s) from DB, e.g. "1-3,5,7-9"')
+    parser.add_argument('-d', '--delete-leak',          nargs='*',                      help='delete leak(s) from DB, e.g. "1-3,5,7-9"', metavar='SOURCE_ID')
     parser.add_argument('-dd', '--deduplication',       action='store_true',            help='deduplicate accounts ahead of time (may eat memory)')
     parser.add_argument('-p', '--search-passwords',     action='store_true',            help='search by password')
     parser.add_argument('-m', '--search-description',   action='store_true',            help='search by description / misc')

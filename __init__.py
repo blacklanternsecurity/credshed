@@ -1,1 +1,1 @@
-from credshed.lib.core import *
+from .lib.core import *

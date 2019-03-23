@@ -61,7 +61,7 @@ class DB():
         self.leak_size = 0
 
 
-    def find(self, keywords, password=False, misc=False):
+    def find(self, keywords, password=False, misc=False, max_results=10000):
         '''
         ~ 2 minutes to regex-search non-indexed 100M-entry DB
         '''
@@ -95,17 +95,18 @@ class DB():
                 #results['emails'] = self.accounts.find({'email': {'$regex': main_keyword}})
             '''
 
-
+            # if query is an email
             if Account.is_email(keyword):
                 errprint('[+] Searching by email')
                 email, domain = keyword.lower().split('@')[:2]
                 domain_keyword = base64.b64encode(sha1(b'.'.join(domain.lower().encode().split(b'.')[-2:])).digest()).decode()[:6]
                 query_regex = r'^{}.*'.format(domain_keyword).replace('+', r'\+')
                 query = {'$and': [{'email': email}, {'_id': {'$regex': query_regex}}]}
-                results['emails'] = self.accounts.find(query)
+                results['emails'] = self.accounts.find(query).limit(max_results)
                 #results['emails'] = self.accounts.find({'email': email, '_id': {'$regex': domain_regex}})
                 #results['emails'] = self.accounts.find({'email': email})
 
+            # if query is a domain
             elif re.compile(r'^([a-zA-Z0-9_\-\.]+)\.([a-zA-Z]{2,8})$').match(keyword):
                 errprint('[+] Searching by domain')
                 domain = keyword.lower()
@@ -113,19 +114,19 @@ class DB():
                 query_regex = r'^{}.*'.format(domain_keyword).replace('+', r'\+')
                 query = {'_id': {'$regex': query_regex}}
                 #errprint(query)
-                results['emails'] = self.accounts.find(query)
+                results['emails'] = self.accounts.find(query).limit(max_results)
 
+            # otherwise, assume username
             else:
                 errprint('[+] Searching by username')
-                query_regex = r'^{}.*'.format(keyword).replace('+', r'\+')
+                query_regex = r'^{}$'.format(keyword).replace('+', r'\+')
                 query = {'username': {'$regex': query_regex}}
                 #errprint(query)
-                results['usernames'] = self.accounts.find(query)
+                results['usernames'] = self.accounts.find(query).limit(max_results)
 
             for category in results:
                 for result in results[category]:
                     yield Account.from_document(result)
-
             
 
 
