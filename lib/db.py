@@ -24,10 +24,7 @@ class DB():
         # main DB
         self.main_client = pymongo.MongoClient('127.0.0.1', 27017)
         self.main_db = self.main_client['credshed']
-        # self.noshard_client = pymongo.MongoClient('127.0.0.1', 27019)
-        # databases
-        
-        #self.noshard_db = self.noshard_client['credshed']
+
         # accounts
         try:
             self.main_db.create_collection('accounts')
@@ -35,7 +32,7 @@ class DB():
             pass
         self.accounts = self.main_db.accounts
 
-        # account metadata source data, counters, which leaks include which accounts, etc.
+        # meta DB (account metadata including source information, counters, leak <--> account associations, etc.)
         self.meta_client = pymongo.MongoClient('127.0.0.1', 27018)
         self.meta_db = self.meta_client['credshed']
 
@@ -61,7 +58,7 @@ class DB():
         self.leak_size = 0
 
 
-    def find(self, keywords, password=False, misc=False, max_results=10000):
+    def search(self, keywords, password=False, misc=False, max_results=10000):
         '''
         ~ 2 minutes to regex-search non-indexed 100M-entry DB
         '''
@@ -267,19 +264,18 @@ class DB():
                     errors.append(comms_queue.get_nowait())
                 except queue.Empty:
                     break
-            #for error in errors:
-            #    errprint(error)
 
             end_time = time.time()
             time_elapsed = (end_time - start_time)
 
             import_result = ''
             if self.leak_overall > 0:
-                import_result += '[+] Total Accounts: {:,}\n'.format(self.leak_overall)
-                import_result += '[+] Unique Accounts: {:,} ({:.1f}%)\n'.format(self.leak_unique, ((self.leak_unique/self.leak_overall)*100))
-                import_result += '[+] Time Elapsed: {} hours, {} minutes, {} seconds\n'.format(int(time_elapsed/3600), int((time_elapsed%3600)/60), int((time_elapsed%3600)%60))
+                import_result += '[+] Import results for "{}"\n'.format(leak.source.name)
+                import_result += '[+]    total accounts: {:,}\n'.format(self.leak_overall)
+                import_result += '[+]    unique accounts: {:,} ({:.1f}%)\n'.format(self.leak_unique, ((self.leak_unique/self.leak_overall)*100))
+                import_result += '[+]    time elapsed: {} hours, {} minutes, {} seconds\n'.format(int(time_elapsed/3600), int((time_elapsed%3600)/60), int((time_elapsed%3600)%60))
             if errors:
-                import_result += '[!] Errors:\n     {}'.format('\n     '.join(errors))
+                import_result += '[!] Errors:\n       {}'.format('\n       '.join(errors))
 
             return import_result
 
@@ -313,7 +309,7 @@ class DB():
                 if len(to_delete) % batch_size == 0:
                     accounts_deleted += self.accounts.bulk_write(to_delete, ordered=False).deleted_count
                     to_delete.clear()
-                    errprint('[+] Deleted {:,} accounts'.format(accounts_deleted), end='')
+                    errprint('\r[+] Deleted {:,} accounts'.format(accounts_deleted), end='')
 
             if to_delete:
                 accounts_deleted += self.accounts.bulk_write(to_delete, ordered=False).deleted_count
@@ -323,7 +319,7 @@ class DB():
             # pull source ID from affected accounts
             self.account_tags.update_many({'s': source_id}, {'$pull': {'s': source_id}})
 
-            errprint('[+] Deleted {:,} accounts'.format(accounts_deleted))
+            errprint('\r[+] Deleted {:,} accounts'.format(accounts_deleted), end='')
 
             self.sources.delete_many({'_id': source_id})
             self.counters.update_one({'collection': 'sources'}, {'$unset': {str(source_id): ''}})
@@ -333,7 +329,7 @@ class DB():
             errprint(str(e))
             errprint('[!] Can\'t find source "{}:{}"'.format(source.name, source.hashtype))
 
-        errprint('[*] {:,} accounts deleted'.format(accounts_deleted))
+        errprint('\n[*] {:,} accounts deleted'.format(accounts_deleted))
         errprint('[*] Done')
         sleep(1)
         return accounts_deleted
@@ -529,8 +525,18 @@ class DB():
                             unique_accounts += num_inserted
                         '''
 
-                        num_inserted = self._mongo_main_add_batch(mongo_main, source_id, copy.deepcopy(batch))
-                        self._mongo_meta_add_batch(mongo_meta, source_id, batch)
+                        try:
+
+                            num_inserted = self._mongo_main_add_batch(mongo_main, source_id, copy.deepcopy(batch))
+                            self._mongo_meta_add_batch(mongo_meta, source_id, batch)
+
+                        except pymongo.errors.PyMongoError as e:
+                            error = str(e)
+                            try:
+                                error += (str(e.details))
+                            except AttributeError:
+                                pass
+                            comms_queue.put('Error in _add_batches():\n{}'.format(error))
 
                         unique_accounts += num_inserted
 
@@ -544,7 +550,7 @@ class DB():
             return
 
         except Exception as e:
-            #comms_queue.put('Error in _add_batches()\n'.format(str(e)))
+            comms_queue.put('Error in _add_batches():\n{}'.format(str(e)))
             return
 
         finally:
@@ -566,6 +572,7 @@ class DB():
         unique_accounts = 0
         attempts_left = int(max_attempts)
         mongo_batch = []
+        error_details = ''
 
         for account_doc in batch:
             _id = account_doc.pop('_id')
@@ -580,16 +587,16 @@ class DB():
 
             # sleep for a bit and try again if there's an error
             except (pymongo.errors.OperationFailure, pymongo.errors.InvalidOperation) as e:
-                #errprint('\n[!] Error adding account batch to main DB.  Attempting to continue.\n{}'.format(str(e)[:64]))
                 try:
-                    errprint(str(e.details)[:80])
+                    error_details = str(e.details)[:128]
                 except AttributeError:
                     pass
                 attempts_left -= 1
                 sleep(5)
                 continue
 
-        #errprint('\n[!] Failed to add batch to main DB after {} tries'.format(max_attempts))
+        raise pymongo.errors.PyMongoError('Failed to add batch to main DB after {} tries'.format(max_attempts))
+
 
 
     @staticmethod

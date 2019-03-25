@@ -76,6 +76,12 @@ class Account():
             raise AccountCreationError('Description too long: {}'.format(str(v)[2:-1][:64]))
 
 
+    @property
+    def _id(self):
+
+        return self.to_object_id()
+
+
     def document(self, id_only=False):
 
         doc = dict()

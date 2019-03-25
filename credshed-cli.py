@@ -44,8 +44,8 @@ class CredShedCLI(CredShed):
 
         end_time = datetime.now()
         time_elapsed = (end_time - start_time)
-        print('\n[+] Searched {:,} accounts in {} seconds'.format(num_accounts_in_db, str(time_elapsed)[:-4]))
-        print('[+] {:,} results for "{}"'.format(num_results, '|'.join(query)))
+        errprint('\n[+] Searched {:,} accounts in {} seconds'.format(num_accounts_in_db, str(time_elapsed)[:-4]))
+        errprint('[+] {:,} results for "{}"'.format(num_results, '|'.join(query)))
 
 
     def _stats(self):

@@ -93,6 +93,9 @@ from pymongo.errors import ServerSelectionTimeoutError
 class CredShedError(Exception):
     pass
 
+class CredShedTimeout(CredShedError):
+    pass
+
 
 def number_range(s):
     '''
@@ -125,7 +128,7 @@ class CredShed():
         try:
             self.db = DB()
         except ServerSelectionTimeoutError as e:
-            raise CredShedError('Connection to database timed out: {}'.format(str(e)))
+            raise CredShedTimeout('Connection to database timed out: {}'.format(str(e)))
 
         self.threads = threads
         self.output = Path(output)
@@ -144,7 +147,7 @@ class CredShed():
         threading.Thread(target=self._tail_comms_queue, daemon=True).start()
 
 
-    def search(self, query):
+    def search(self, query, limit=0):
         '''
         query = search string(s)
         yields Account objects
@@ -153,9 +156,15 @@ class CredShed():
         if type(query) == str:
             query = [query]
 
+        num_results = 0
         for query in query:
+            num_results += 1
+
+            if limit > 0 and num_results > limit:
+                break
+
             try:
-                for result in self.db.find(str(query)):
+                for result in self.db.search(str(query), max_results=limit):
                     #print('{}:{}@{}:{}:{}'.format(result['username'], result['email'], result['domain'], result['password'], result['misc']))
                     yield result
 
@@ -208,23 +217,26 @@ class CredShed():
                             if t is None or not t.is_alive():
                                 if t is not None:
                                     completed += 1
-                                    time_elapsed = datetime.now() - start_time 
+                                    time_elapsed = datetime.now() - start_time
+                                    self._print('\n>> {:,} files completed in {} <<\n'.format(completed, str(time_elapsed).split('.')[0]))
 
-                                    self._print('\n>> File "{}" finished ({:,} files completed in {}) <<\n'.format(t.name, completed, str(time_elapsed).split('.')[0]))
                                 _t = threading.Thread(target=self._add_by_file, name=str(l[1]), args=(l,))
                                 pool[i] = _t
                                 _t.start()
                                 # break out of infinite loop
                                 assert False
+
                         sleep(.1)
 
                     except AssertionError:
                         break
 
             for t in pool:
-                t.join()
-                completed += 1
-                self._print('\n>> File "{}" finished ({:,} files completed in {}) <<\n'.format(t.name, completed, str(time_elapsed).split('.')[0]))
+                if t is not None:
+                    t.join()
+                    completed += 1
+                    time_elapsed = datetime.now() - start_time
+                    self._print('\n>> {:,} files completed in {} <<\n'.format(completed, str(time_elapsed).split('.')[0]))
 
             '''
             futures = []
@@ -274,14 +286,14 @@ class CredShed():
                     if not input('OK? [Y/n] ').lower().startswith('n'):
                         start_time = datetime.now()
 
-                        # disabling threads, since concurrent deletion of leaks
-                        # leaves leftover accounts
+                        # disabling threads, since concurrent deletion of leaks leaves leftover accounts
                         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
                             for source_id in to_delete:
                                 executor.submit(self.db.remove_leak, source_id)
 
                         end_time = datetime.now()
-                        time_elapsed = (end_time - start_time)                                
+                        time_elapsed = (end_time - start_time)
+                        print('\n[+] Time Elapsed: {}\n'.format(str(time_elapsed).split('.')[0]))
                 else:
                     print('[!] No valid leaks specified were specified for deletion')
 
@@ -294,12 +306,15 @@ class CredShed():
                     most_recent_source_id = self.db.most_recent_source_id()
 
                     try:
-                        to_delete = int(input('Enter ID to delete [{}] (CTRL+C when finished): '.format(most_recent_source_id)) or most_recent_source_id)
+                        to_delete = [input('Enter ID(s) to delete [{}] (CTRL+C when finished): '.format(most_recent_source_id))] or [most_recent_source_id]
                     except ValueError:
                         self._print('[!] Invalid entry', end='\n\n')
                         sleep(1)
                         continue
 
+                    self.delete_leaks(to_delete)
+
+                    '''
                     self._print('\nDeleting all entries from:\n\t{}: {}'.format(to_delete, str(self.db.get_source(to_delete))), end='\n\n')
                     if not input('OK? [Y/n] ').lower().startswith('n'):
                         start_time = datetime.now()
@@ -307,10 +322,12 @@ class CredShed():
                         end_time = datetime.now()
                         time_elapsed = (end_time - start_time)
                         print('\n[+] Time Elapsed: {}\n'.format(str(time_elapsed).split('.')[0]))
+                    '''
 
         except KeyboardInterrupt:
             print('\n[*] Deletion cancelled')
             sys.exit(1)
+
 
 
 
@@ -361,14 +378,24 @@ class CredShed():
 
             leak = Leak(q.source_name, q.source_hashtype, q.source_misc)
 
-            # see if source already exists
-            source_already_in_db = db.sources.find_one(leak.source.document(misc=False, date=False))
-            if source_already_in_db:
-                if not self.unattended:
-                    answer = input('Source ID {} ({}) already exists, merge? (Y/n)'.format(source_already_in_db['_id'], source_already_in_db['name'])) or 'y'
-                    if not answer.lower().startswith('y'):
-                        self.comms_queue.put('[*] Skipping existing source ID {} ({})'.format(source_already_in_db['_id'], source_already_in_db['name']))
-                        return
+            try:
+                # see if source already exists
+                source_already_in_db = db.sources.find_one(leak.source.document(misc=False, date=False))
+
+                if source_already_in_db:
+                    if not self.unattended:
+                        answer = input('Source ID {} ({}) already exists, merge? (Y/n)'.format(source_already_in_db['_id'], source_already_in_db['name'])) or 'y'
+                        if not answer.lower().startswith('y'):
+                            self.comms_queue.put('[*] Skipping existing source ID {} ({})'.format(source_already_in_db['_id'], source_already_in_db['name']))
+                            return
+
+            except pymongo.errors.PyMongoError as e:
+                error = str(e)
+                try:
+                    e += str(e.details)
+                except AttributeError:
+                    pass
+                comms_queue.put(error)
 
             if not self.deduplication:
                 # override set with generator
