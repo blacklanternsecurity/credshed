@@ -10,6 +10,7 @@ TODO:
 import sys
 import argparse
 from lib.core import *
+from lib.errors import *
 from pathlib import Path
 from datetime import datetime
 from multiprocessing import cpu_count
@@ -32,13 +33,13 @@ class CredShedCLI(CredShed):
         super().__init__(unattended=unattended, deduplication=deduplication, threads=threads)
 
 
-    def _search(self, query):
+    def _search(self, query, query_type, subdomains=1):
 
         start_time = datetime.now()
         num_accounts_in_db = self.db.account_count()
 
         num_results = 0
-        for result in self.search(query):
+        for result in self.search(query, query_type=query_type, subdomains=subdomains):
             print(result)
             num_results += 1
 
@@ -59,8 +60,11 @@ def main(options):
     try:
         cred_shed = CredShedCLI(output=options.out, unattended=options.unattended, deduplication=options.deduplication, threads=options.threads)
     except CredShedError as e:
-        stderr.write('[!] {}\n'.format(str(e)))
+        errprint('[!] {}\n'.format(str(e)))
         sys.exit(1)
+
+    options.query_type = options.query_type.strip().lower()
+    assert options.query_type in ['auto', 'email', 'domain', 'username'], 'Invalid query type: {}'.format(str(options.query_type))
 
     # if we're importing stuff
     try:
@@ -71,16 +75,31 @@ def main(options):
             cred_shed.delete_leaks(options.delete_leak)
 
         if options.search:
-            cred_shed._search(options.search)
+            for keyword in options.search:
+
+                  # auto-detect query type
+                if options.query_type == 'auto':
+                    if Account.is_email(keyword):
+                        options.query_type = 'email'
+                        errprint('[+] Searching by email')
+                    elif re.compile(r'^([a-zA-Z0-9_\-\.]+)\.([a-zA-Z]{2,8})$').match(keyword):
+                        options.query_type = 'domain'
+                        errprint('[+] Searching by domain')
+                    else:
+                        errprint('[!] Failed to auto-detect query type, please specify with --query-type')
+                        # options.query_type = 'username'
+                        # errprint('[+] Searching by username')
+
+                cred_shed._search(options.search, query_type=options.query_type, subdomains=options.subdomains)
 
         if options.stats:
             cred_shed._stats()
 
     except CredShedError as e:
-        sys.stderr.write('[!] {}'.format(str(e)))
+        errprint('[!] {}'.format(str(e)))
 
     except KeyboardInterrupt:
-        sys.stderr.write('[!] CredShed Interrupted\n')
+        errprint('[!] CredShed Interrupted\n')
         return
 
     finally:
@@ -98,6 +117,8 @@ if __name__ == '__main__':
     default_threads = int(num_cores)
 
     parser.add_argument('search',                       nargs='*',                      help='search term(s)')
+    parser.add_argument('-sd', '--subdomains',          type=int,   default=1,          help='only consider the top INT subdomains when searching by domain (default: 1)')
+    parser.add_argument('-q', '--query-type',           default='auto',                 help='query type (email, domain, or username)')
     parser.add_argument('-a', '--add',      type=Path,  nargs='+',                      help='add file(s) to DB')
     parser.add_argument('-t', '--stats',    action='store_true',                        help='show db stats')
     parser.add_argument('-o', '--out',      type=Path,  default='__db__',               help='write output to file instead of DB')

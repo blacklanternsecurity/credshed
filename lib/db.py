@@ -7,6 +7,7 @@ import time
 import queue
 import pymongo
 from .leak import *
+from .errors import *
 from time import sleep
 import multiprocessing
 from hashlib import sha1
@@ -70,10 +71,12 @@ class DB():
         self.leak_size = 0
 
 
-    def search(self, keywords, password=False, misc=False, max_results=10000):
+    def search(self, keywords, query_type='email', max_results=10000, subdomains=1):
         '''
         ~ 2 minutes to regex-search non-indexed 100M-entry DB
         '''
+
+        query_type = str(query_type).strip().lower()
 
         if type(keywords) == str:
             keywords = [keywords,]
@@ -104,38 +107,51 @@ class DB():
                 #results['emails'] = self.accounts.find({'email': {'$regex': main_keyword}})
             '''
 
-            # if query is an email
-            if Account.is_email(keyword):
-                errprint('[+] Searching by email')
-                email, domain = keyword.lower().split('@')[:2]
-                domain_keyword = base64.b64encode(sha1(b'.'.join(domain.lower().encode().split(b'.')[-2:])).digest()).decode()[:6]
-                query_regex = r'^{}.*'.format(domain_keyword).replace('+', r'\+')
-                query = {'$and': [{'email': email}, {'_id': {'$regex': query_regex}}]}
-                results['emails'] = self.accounts.find(query).limit(max_results)
-                #results['emails'] = self.accounts.find({'email': email, '_id': {'$regex': domain_regex}})
-                #results['emails'] = self.accounts.find({'email': email})
+            if query_type == 'email':
+                try:
+                    email, domain = keyword.lower().split('@')[:2]
+                    domain_hash = base64.b64encode(sha1(b'.'.join(domain.lower().encode().split(b'.')[-2:])).digest()).decode()[:6]
+                    query_regex = r'^{}.*'.format(domain_hash).replace('+', r'\+')
+                    query = {'$and': [{'email': email}, {'_id': {'$regex': query_regex}}]}
+                    results['emails'] = self.accounts.find(query).limit(max_results)
+                    #results['emails'] = self.accounts.find({'email': email, '_id': {'$regex': domain_regex}})
+                    #results['emails'] = self.accounts.find({'email': email})
 
-            # if query is a domain
-            elif re.compile(r'^([a-zA-Z0-9_\-\.]+)\.([a-zA-Z]{2,8})$').match(keyword):
-                errprint('[+] Searching by domain')
+                except ValueError:
+                    # assume email only
+                    email = r'^{}$'.format(keyword.lower())
+                    query = {'email': {'$regex': email}}
+                    results['emails'] = self.accounts.find(query).limit(max_results)
+
+
+            elif query_type == 'domain':
                 domain = keyword.lower()
-                domain_keyword = base64.b64encode(sha1(b'.'.join(keyword.lower().encode().split(b'.')[-2:])).digest()).decode()[:6]
-                query_regex = r'^{}.*'.format(domain_keyword).replace('+', r'\+')
-                query = {'_id': {'$regex': query_regex}}
+                domain_hash = base64.b64encode(sha1(b'.'.join(keyword.lower().encode().split(b'.')[-2:])).digest()).decode()[:6]
+                query_regex = r'^{}.*'.format(domain_hash).replace('+', r'\+')
+                if subdomains == 1:
+                    query = {'_id': {'$regex': query_regex}}
+                else:
+                    domain_keyword = '.'.join(domain.split('.')[-(subdomains+1):])[::-1]
+                    domain_query = r'^{}.*'.format(domain_keyword)
+                    query = {'$and': [{'_id': {'$regex': query_regex}}, {'domain': {'$regex': domain_query}}]}
                 #errprint(query)
                 results['emails'] = self.accounts.find(query).limit(max_results)
 
-            # otherwise, assume username
-            else:
-                errprint('[+] Searching by username')
+            elif query_type == 'username':
                 query_regex = r'^{}$'.format(keyword).replace('+', r'\+')
                 query = {'username': {'$regex': query_regex}}
                 #errprint(query)
                 results['usernames'] = self.accounts.find(query).limit(max_results)
 
+            else:
+                raise CredShedError('Invalid query type: {}'.format(str(query_type)))
+
             for category in results:
                 for result in results[category]:
-                    yield Account.from_document(result)
+                    try:
+                        yield Account.from_document(result)
+                    except AccountCreationError as e:
+                        errprint('[!] {}'.format(str(e)))
             
 
 

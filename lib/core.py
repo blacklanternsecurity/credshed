@@ -83,6 +83,7 @@ import queue
 import threading
 from .db import DB
 from .leak import *
+from .errors import *
 from time import sleep
 from .quickparse import *
 from datetime import datetime
@@ -90,14 +91,7 @@ from multiprocessing import cpu_count
 from pymongo.errors import ServerSelectionTimeoutError
 
 
-class CredShedError(Exception):
-    pass
 
-class CredShedTimeout(CredShedError):
-    pass
-
-class CredShedDatabaseError(CredShedError):
-    pass
 
 
 def number_range(s):
@@ -150,7 +144,7 @@ class CredShed():
         threading.Thread(target=self._tail_comms_queue, daemon=True).start()
 
 
-    def search(self, query, limit=0):
+    def search(self, query, query_type='email', limit=0, subdomains=1):
         '''
         query = search string(s)
         yields Account objects
@@ -167,7 +161,7 @@ class CredShed():
                 break
 
             try:
-                for result in self.db.search(str(query), max_results=limit):
+                for result in self.db.search(str(query), query_type=query_type, max_results=limit, subdomains=subdomains):
                     #print('{}:{}@{}:{}:{}'.format(result['username'], result['email'], result['domain'], result['password'], result['misc']))
                     yield result
 
