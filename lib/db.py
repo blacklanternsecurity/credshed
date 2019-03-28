@@ -348,7 +348,7 @@ class DB():
 
         errprint('\n[*] {:,} accounts deleted'.format(accounts_deleted))
         errprint('[*] Done')
-        sleep(1)
+        # sleep(1)
         return accounts_deleted
 
 

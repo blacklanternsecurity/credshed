@@ -348,17 +348,19 @@ class QuickParse():
         returns an Account() object
         '''
 
-        email_match = Account.email_regex_search_bytes.search(line)
+        if len(line) < 1024:
 
-        if email_match:
-            email = line[email_match.start():email_match.end()]
-            # strip out email and replace with "@"
-            line = line.replace(email, b'@')
-            if len(line) > 2:
-                # only use the last 511 characters
-                return Account(email=email, misc=line[-511:])
-            else:
-                raise AccountCreationError('Not enough content in line: {}'.format(str(line)[:64]))
+            email_match = Account.email_regex_search_bytes.search(line)
+
+            if email_match:
+                email = line[email_match.start():email_match.end()]
+                # strip out email and replace with "@"
+                line = line.replace(email, b'@')
+                if len(line) > 2:
+                    # only use the last 511 characters
+                    return Account(email=email, misc=line[-511:])
+                else:
+                    raise AccountCreationError('Not enough content in line: {}'.format(str(line)[:64]))
 
         raise AccountCreationError('No valid email in line: {}'.format(str(line)[:64]))
 
