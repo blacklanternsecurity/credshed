@@ -19,27 +19,39 @@ class DB():
 
     def __init__(self):
 
-        ### MONGO ###
-
-        # main DB
-        self.main_client = pymongo.MongoClient('127.0.0.1', 27017)
-        self.main_db = self.main_client['credshed']
-
-        # accounts
         try:
-            self.main_db.create_collection('accounts')
-        except pymongo.errors.CollectionInvalid:
-            pass
-        self.accounts = self.main_db.accounts
 
-        # meta DB (account metadata including source information, counters, leak <--> account associations, etc.)
-        self.meta_client = pymongo.MongoClient('127.0.0.1', 27018)
-        self.meta_db = self.meta_client['credshed']
+            ### MONGO ###
 
-        try:
-            self.meta_db.create_collection('account_tags')
-        except pymongo.errors.CollectionInvalid:
-            pass
+            # main DB
+            self.main_client = pymongo.MongoClient('127.0.0.1', 27017)
+            self.main_db = self.main_client['credshed']
+
+            # accounts
+            try:
+                self.main_db.create_collection('accounts')
+            except pymongo.errors.CollectionInvalid:
+                pass
+            self.accounts = self.main_db.accounts
+
+            # meta DB (account metadata including source information, counters, leak <--> account associations, etc.)
+            self.meta_client = pymongo.MongoClient('127.0.0.1', 27018)
+            self.meta_db = self.meta_client['credshed']
+
+            try:
+                self.meta_db.create_collection('account_tags')
+            except pymongo.errors.CollectionInvalid:
+                pass
+
+        except pymongo.errors.PyMongoError as e:
+            error = str(e) + '\n'
+            try:
+                error += str(e.details)
+            except AttributeError:
+                pass
+            raise CredShedDatabaseError(error)
+
+
         self.account_tags = self.meta_db.account_tags
 
         #self.accounts.create_index([('id', pymongo.ASCENDING)])
@@ -209,24 +221,29 @@ class DB():
             result_queue = multiprocessing.Queue(num_threads*10)
             comms_queue = multiprocessing.Queue(num_threads*10)
 
-            # square one
+            # in my experience, there's no such thing as luck
+            p = [None]
             for thread_id in range(num_threads):
                 while 1:
-                    p = multiprocessing.Process(target=self._add_batches, args=(batch_queue, result_queue, comms_queue, source_id), daemon=True)
-                    p.start()
+                    p[0] = multiprocessing.Process(target=self._add_batches, args=(batch_queue, result_queue, comms_queue, source_id), daemon=True)
+                    sleep(.1)
+                    p[0].start()
                     sleep(.2)
 
                     # These poor threads have chronic suicidial depression
                     # make sure they actually start instead of immediately hanging themselves
                     try:
                         comms_queue.get_nowait()
-                        pool.append(p)
+                        pool.append(p[0])
                         #errprint('[+] Worker started')
                         #errprint('[+] Thread {} started successfully'.format(thread_id))
                         break
                     except queue.Empty:
                         #errprint('[+] Thread {} failed to start, terminating'.format(thread_id))
-                        p.terminate()
+                        p[0].terminate()
+                        sleep(.1)
+                        p.clear()
+                        p = [None]
                         continue
 
 

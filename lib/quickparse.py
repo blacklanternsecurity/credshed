@@ -86,7 +86,8 @@ class QuickParse():
         '''
 
         # make sure file exists
-        assert self.file.is_file(), 'Failure reading {}'.format(str(self.file))
+        if not self.file.is_file():
+            raise QuickParseError('Failure reading {}'.format(str(self.file)))
 
         head = [x for x in run(['head', '-n', str(int(num_lines/2)), str(self.file)], stdout=PIPE).stdout.splitlines() if x]
         tail = [x for x in run(['tail', '-n', str(int(num_lines/2)), str(self.file)], stdout=PIPE).stdout.splitlines() if x]
@@ -545,13 +546,16 @@ class QuickParse():
     def __iter__(self):
 
         #assert self.info_gathered, 'Run .gather_info() first'
-        with open(str(self.file), 'rb') as f:
-            for line in f:
-                try:
-                    if self.strict:
-                        yield self.translate_line(line)
-                    else:
-                        yield self.absorb_line(line)
-                except AccountCreationError as e:
-                    self._adaptive_print('[!] {}: {}'.format(str(e), str(line)[:64]))
-                    continue
+        try:
+            with open(str(self.file), 'rb') as f:
+                for line in f:
+                    try:
+                        if self.strict:
+                            yield self.translate_line(line)
+                        else:
+                            yield self.absorb_line(line)
+                    except AccountCreationError as e:
+                        self._adaptive_print('[!] {}: {}'.format(str(e), str(line)[:64]))
+                        continue
+        except PermissionError:
+            raise QuickParseError('Permission denied on {}'.format(str(self.file)))

@@ -38,6 +38,15 @@ class Account():
 
     def __init__(self, email=b'', username=b'', password=b'', _hash=b'', misc=b''):
 
+        # abort if values are too long
+        # saves the regexes from choking the CPU
+        for v in [email, username, password]:
+            if len(v) >= 128:
+                raise AccountCreationError('Value too long: {}'.format(str(v)[2:-1][:64]))
+        for vi in [_hash, misc]:
+            if len(v) >= 512:
+                raise AccountCreationError('Hash or desc. too long: {}'.format(str(v)[2:-1][:64]))
+
         # remove whitespace, single-quotes, and backslashes
         self.email = email.strip().lower().translate(None, b"'\\")
         self.username = username.strip().translate(None, b"'\\")
@@ -68,12 +77,6 @@ class Account():
         if not (self.email or self.username): # and (self.password or self.misc) ):
             # print(email, username, password, _hash, misc)
             raise AccountCreationError('Must have either username or email:\n{}'.format(str(self)[:128]))
-
-        for v in [self.email, self.username, self.password]:
-            if len(v) >= 128:
-                raise AccountCreationError('Value too long: {}'.format(str(v)[2:-1][:64]))
-        if len(self.misc) >= 512:
-            raise AccountCreationError('Description too long: {}'.format(str(v)[2:-1][:64]))
 
 
     @property
@@ -126,6 +129,10 @@ class Account():
     @classmethod
     def is_email(self, email):
 
+        # abort if value is too long
+        if len(email) > 128:
+            return False
+
         try:
             if self.email_regex.match(email):
                 return True
@@ -138,6 +145,9 @@ class Account():
 
     @classmethod
     def is_fuzzy_email(self, email):
+
+        if len(email) > 128:
+            return False
 
         try:
             if self.fuzzy_email_regex.match(email):

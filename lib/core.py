@@ -96,6 +96,9 @@ class CredShedError(Exception):
 class CredShedTimeout(CredShedError):
     pass
 
+class CredShedDatabaseError(CredShedError):
+    pass
+
 
 def number_range(s):
     '''
@@ -299,7 +302,7 @@ class CredShed():
 
             else:
 
-                while True:
+                while 1:
 
                     assert self.db.sources.estimated_document_count() > 0, 'No more leaks in DB'
                     print(self.db.stats())
@@ -432,6 +435,8 @@ class CredShed():
                         #self._print(str(account))
                         f.write(account.to_bytes() + b'\n')
                 #leak.dump()
+        except QuickParseError as e:
+            self.comms_queue.put('[!] {}'.format(str(e)))
 
         finally:
             self.comms_queue.put('[+] Finished adding {}'.format(leak_file))
