@@ -33,13 +33,13 @@ class CredShedCLI(CredShed):
         super().__init__(unattended=unattended, deduplication=deduplication, threads=threads)
 
 
-    def _search(self, query, query_type, subdomains=1):
+    def _search(self, query, query_type):
 
         start_time = datetime.now()
         num_accounts_in_db = self.db.account_count()
 
         num_results = 0
-        for result in self.search(query, query_type=query_type, subdomains=subdomains):
+        for result in self.search(query, query_type=query_type):
             print(result)
             num_results += 1
 
@@ -77,12 +77,12 @@ def main(options):
         if options.search:
             for keyword in options.search:
 
-                  # auto-detect query type
+                # auto-detect query type
                 if options.query_type == 'auto':
                     if Account.is_email(keyword):
                         options.query_type = 'email'
                         errprint('[+] Searching by email')
-                    elif re.compile(r'^([a-zA-Z0-9_\-\.]+)\.([a-zA-Z]{2,8})$').match(keyword):
+                    elif re.compile(r'^([a-zA-Z0-9_\-\.]*)\.([a-zA-Z]{2,8})$').match(keyword):
                         options.query_type = 'domain'
                         errprint('[+] Searching by domain')
                     else:
@@ -90,7 +90,7 @@ def main(options):
                         # options.query_type = 'username'
                         # errprint('[+] Searching by username')
 
-                cred_shed._search(options.search, query_type=options.query_type, subdomains=options.subdomains)
+                cred_shed._search(options.search, query_type=options.query_type)
 
         if options.stats:
             cred_shed._stats()
@@ -99,6 +99,7 @@ def main(options):
         errprint('[!] {}'.format(str(e)))
 
     except KeyboardInterrupt:
+        cred_shed.STOP = True
         errprint('[!] CredShed Interrupted\n')
         return
 
@@ -117,7 +118,6 @@ if __name__ == '__main__':
     default_threads = int(num_cores)
 
     parser.add_argument('search',                       nargs='*',                      help='search term(s)')
-    parser.add_argument('-sd', '--subdomains',          type=int,   default=1,          help='only consider the top INT subdomains when searching by domain (default: 1)')
     parser.add_argument('-q', '--query-type',           default='auto',                 help='query type (email, domain, or username)')
     parser.add_argument('-a', '--add',      type=Path,  nargs='+',                      help='add file(s) to DB')
     parser.add_argument('-t', '--stats',    action='store_true',                        help='show db stats')

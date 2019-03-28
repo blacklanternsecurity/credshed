@@ -71,7 +71,7 @@ class DB():
         self.leak_size = 0
 
 
-    def search(self, keywords, query_type='email', max_results=10000, subdomains=1):
+    def search(self, keywords, query_type='email', max_results=10000):
         '''
         ~ 2 minutes to regex-search non-indexed 100M-entry DB
         '''
@@ -128,10 +128,11 @@ class DB():
                 domain = keyword.lower()
                 domain_hash = base64.b64encode(sha1(b'.'.join(keyword.lower().encode().split(b'.')[-2:])).digest()).decode()[:6]
                 query_regex = r'^{}.*'.format(domain_hash).replace('+', r'\+')
-                if subdomains == 1:
+                num_sections = len(domain.split('.'))
+                if domain.count('.') == 1:
                     query = {'_id': {'$regex': query_regex}}
                 else:
-                    domain_keyword = '.'.join(domain.split('.')[-(subdomains+1):])[::-1]
+                    domain_keyword = '.'.join(domain.split('.')[-(num_sections+1):])[::-1]
                     domain_query = r'^{}.*'.format(domain_keyword)
                     query = {'$and': [{'_id': {'$regex': query_regex}}, {'domain': {'$regex': domain_query}}]}
                 #errprint(query)

@@ -141,10 +141,12 @@ class CredShed():
             with open(str(self.output), 'w') as f:
                 f.write('')
 
+        self.STOP = False
+
         threading.Thread(target=self._tail_comms_queue, daemon=True).start()
 
 
-    def search(self, query, query_type='email', limit=0, subdomains=1):
+    def search(self, query, query_type='email', limit=0):
         '''
         query = search string(s)
         yields Account objects
@@ -161,7 +163,7 @@ class CredShed():
                 break
 
             try:
-                for result in self.db.search(str(query), query_type=query_type, max_results=limit, subdomains=subdomains):
+                for result in self.db.search(str(query), query_type=query_type, max_results=limit):
                     #print('{}:{}@{}:{}:{}'.format(result['username'], result['email'], result['domain'], result['password'], result['misc']))
                     yield result
 
@@ -205,36 +207,40 @@ class CredShed():
             pool = [None] * file_threads
             self._print('[+] {:,} files detected, adding in parallel ({} threads, 1 process per file)'.format(len(to_add), file_threads))
 
-            completed = 0
-            for l in to_add:
-                while 1:
-                    try:
-                        for i in range(len(pool)):
-                            t = pool[i]
-                            if t is None or not t.is_alive():
-                                if t is not None:
-                                    completed += 1
-                                    time_elapsed = datetime.now() - start_time
-                                    self._print('\n>> {:,} files completed in {} <<\n'.format(completed, str(time_elapsed).split('.')[0]))
+            try:
+                completed = 0
+                for l in to_add:
+                    while not self.STOP:
+                        try:
+                            for i in range(len(pool)):
+                                t = pool[i]
+                                if t is None or not t.is_alive():
+                                    if t is not None:
+                                        completed += 1
+                                        time_elapsed = datetime.now() - start_time
+                                        self._print('\n>> {:,} files completed in {} <<\n'.format(completed, str(time_elapsed).split('.')[0]))
 
-                                _t = threading.Thread(target=self._add_by_file, name=str(l[1]), args=(l,))
-                                pool[i] = _t
-                                _t.start()
-                                # break out of infinite loop
-                                assert False
+                                    _t = threading.Thread(target=self._add_by_file, name=str(l[1]), args=(l,))
+                                    pool[i] = _t
+                                    _t.start()
+                                    # break out of infinite loop
+                                    assert False
 
-                        sleep(.1)
+                            sleep(.1)
 
-                    except AssertionError:
-                        break
+                        except AssertionError:
+                            break
 
-            for t in pool:
-                if t is not None:
-                    t.join()
-                    completed += 1
-                    time_elapsed = datetime.now() - start_time
-                    self._print('\n>> {:,} files completed in {} <<\n'.format(completed, str(time_elapsed).split('.')[0]))
+                for t in pool:
+                    if t is not None:
+                        t.join()
+                        completed += 1
+                        time_elapsed = datetime.now() - start_time
+                        self._print('\n>> {:,} files completed in {} <<\n'.format(completed, str(time_elapsed).split('.')[0]))
 
+            except KeyboardInterrupt:
+                self.STOP = True
+                raise
             '''
             futures = []
 
@@ -338,9 +344,8 @@ class CredShed():
         ]
         '''
 
-        #self._print('[+] Initializing db for {}'.format(dir_and_file))
+        # initialize database
         db = DB()
-        #self._print('[{}] Instantiated DB'.format(dir_and_file))
 
         try:
 
@@ -352,13 +357,9 @@ class CredShed():
                 leak_dir, leak_friendly_name = dir_and_file
                 leak_file = leak_dir / leak_friendly_name
 
-            #print(leak_file, leak_friendly_name)
 
             try:
-
-                #self._print('[+] Initializing QuickParse object for {}'.format(dir_and_file))
                 q = QuickParse(file=leak_file, source_name=leak_friendly_name, unattended=self.unattended, strict=True)
-                #self._print('[+] Finished initializing QuickParse object for {}'.format(dir_and_file))
 
             except QuickParseError as e:
                 e = '[!] {}'.format(str(e))
@@ -370,8 +371,11 @@ class CredShed():
                 #self.errors.append(e2)
 
             except KeyboardInterrupt:
-                self.comms_queue.put('\n[*] Skipping {}'.format(str(leak_file)))
-                return
+                if self.unattended:
+                    raise
+                else:
+                    self.comms_queue.put('\n[*] Skipping {}'.format(str(leak_file)))
+                    return
 
             leak = Leak(q.source_name, q.source_hashtype, q.source_misc)
 
@@ -400,16 +404,17 @@ class CredShed():
 
             else:
                 account_counter = 0
-                sself.comms_queue.put('[+] Deduplicating accounts')
+                self.comms_queue.put('[+] Deduplicating accounts')
                 for account in q:
-                    #self._print(str(account))
-                    #try:
-                    leak.add_account(account)
-                    #except ValueError:
-                    #    continue
-                    account_counter += 1
-                    if account_counter % 1000 == 0:
-                        self._print('\r[+] {:,} '.format(account_counter), end='')
+                    if not self.STOP:
+                        #self._print(str(account))
+                        #try:
+                        leak.add_account(account)
+                        #except ValueError:
+                        #    continue
+                        account_counter += 1
+                        if account_counter % 1000 == 0:
+                            self._print('\r[+] {:,} '.format(account_counter), end='')
                 self._print('\r[+] {:,}'.format(account_counter))
 
 
