@@ -86,7 +86,8 @@ def main(options):
                         options.query_type = 'domain'
                         errprint('[+] Searching by domain')
                     else:
-                        errprint('[!] Failed to auto-detect query type, please specify with --query-type')
+                        raise CredShedError('Failed to auto-detect query type, please specify with --query-type')
+                        return
                         # options.query_type = 'username'
                         # errprint('[+] Searching by username')
 

@@ -132,7 +132,7 @@ class DB():
                 if domain.count('.') == 1:
                     query = {'_id': {'$regex': query_regex}}
                 else:
-                    domain_keyword = '.'.join(domain.split('.')[-(num_sections+1):])[::-1]
+                    domain_keyword = '.'.join(domain.split('.')[-(subdomains+1):])[::-1]
                     domain_query = r'^{}.*'.format(domain_keyword)
                     query = {'$and': [{'_id': {'$regex': query_regex}}, {'domain': {'$regex': domain_query}}]}
                 #errprint(query)

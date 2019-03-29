@@ -90,22 +90,28 @@ class Account():
             doc['_id'] = self.to_object_id()
             if not id_only:
                 if self.email:
-                    doc['email'], doc['domain'] = self.email.decode(encoding='utf-8').split('@')[:2]
+                    doc['email'], doc['domain'] = self.decode(self.email).split('@')[:2]
                     doc['domain'] = doc['domain'][::-1]
                 if self.username:
-                    doc['username'] = self.username.decode(encoding='utf-8')
+                    doc['username'] = self.decode(self.username)
                 if self.password:
-                    doc['password'] = self.password.decode(encoding='utf-8')
+                    doc['password'] = self.decode(self.password)
                 if self.misc:
-                    doc['misc'] = self.misc.decode(encoding='utf-8')
+                    doc['misc'] = self.decode(self.misc)
 
-        except UnicodeDecodeError as e:
-            errprint('[!] Error decoding {}'.format(str(self.to_bytes())[:64]))
-            return None
         except ValueError:
             errprint('[!] Error formatting {}'.format(str(self.to_bytes())[:64]))
 
         return doc
+
+
+    @staticmethod
+    def decode(b):
+
+        try:
+            return b.decode(encoding='utf-8')
+        except UnicodeDecodeError:
+            return str(b)[2:-1]
 
 
     @classmethod
@@ -212,10 +218,7 @@ class Account():
 
     def __str__(self):
 
-        try:
-            return ':'.join((self.email.decode(), self.username.decode(), self.password.decode(), self.misc.decode()))
-        except UnicodeDecodeError:
-            return str(self.to_bytes(delimiter=b':'))[2:-1]
+        return ':'.join([self.decode(b) for b in [self.email, self.username, self.password, self.misc]])
 
 
 

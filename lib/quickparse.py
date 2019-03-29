@@ -33,7 +33,7 @@ class QuickParse():
     yields Account() objects
     '''
 
-    def __init__(self, file, source_name=None, unattended=False, threshold=.75, strict=True):
+    def __init__(self, file, source_name=None, unattended=False, threshold=.85, strict=True):
 
         self.file = Path(file).resolve()
 
@@ -434,7 +434,7 @@ class QuickParse():
             valid_lines = score / len(lines)
             if valid_lines < self.threshold:
                 raise DelimiterError('Delimiter "{}"" ({:.1f}%) failed threshold ({:.2f}%) in "{}"'.format(\
-                    str(d0[0])[2:-1], (valid_lines*100), self.threshold, self.file))
+                    str(d0[0])[2:-1], (valid_lines*100), self.threshold*100, self.file))
 
         return best_delimiter
 
