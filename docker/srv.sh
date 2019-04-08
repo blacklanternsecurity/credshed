@@ -112,7 +112,7 @@ clean()
 
 delete_db()
 {
-	to_delete=( "$mongo_main_dir" "$mongo_meta_dir" )
+	to_delete=( "$mongo_main_dir" "$mongo_meta_dir" "$mongo_main_0" "$mongo_main_1" "$mongo_main_2" "$mongo_main_3" )
 
 	kill_dock
 	printf '\n[!] DELETING THESE DIRECTORIES - PRESS CTRL+C TO CANCEL\n\n'
@@ -142,7 +142,7 @@ delete_db()
 create_dirs()
 {
 
-	mongo_dirs=( "$mongo_main_dir" "$mongo_meta_dir" )
+	mongo_dirs=( "$mongo_main_dir" "$mongo_meta_dir" "$mongo_main_0" "$mongo_main_1" "$mongo_main_2" "$mongo_main_3" )
 	for mongo_dir in "${to_delete[@]}"
 	do
 		if [ -n "$mongo_dir" -a ! -d "$mongo_dir" ]

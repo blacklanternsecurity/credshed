@@ -68,12 +68,12 @@ class Account():
         else:
             self.password = password
 
-        # keeping a username or email by itself is sometimes useful
+        # keeping an email by itself is sometimes useful
         # if not strictly for OSINT purposes, at least knowing which leaks it was a part of
         # allows searching for additional information in the raw dump
-        if not (self.email or self.username): # and (self.password or self.misc) ):
+        if not self.email or (self.username and (self.password or self.misc)):
             # print(email, username, password, _hash, misc)
-            raise AccountCreationError('Must have either username or email:\n{}'.format(str(self)[:128]))
+            raise AccountCreationError('Not enough information to create account:\n{}'.format(str(self)[:128]))
 
 
     @property
