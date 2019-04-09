@@ -33,16 +33,21 @@ class Account():
     # same thing but for raw bytes
     fuzzy_email_regex_bytes = re.compile(rb'^(.+)@(.+)\.(.+)')
 
+    # max length for email, username, and password
+    max_length_1 = 128
+    # max length for hash, misc
+    max_length_2 = 256
+
     def __init__(self, email=b'', username=b'', password=b'', _hash=b'', misc=b''):
 
         # abort if values are too long
-        # saves the regexes from choking the CPU
-        for v in [email, username, password]:
-            if len(v) >= 128:
-                raise AccountCreationError('Value too long: {}'.format(str(v)[2:-1][:64]))
-        for vi in [_hash, misc]:
-            if len(v) >= 512:
-                raise AccountCreationError('Hash or desc. too long: {}'.format(str(v)[2:-1][:64]))
+        # saves the regexes from hogging CPU
+        #for v in [email, username, password]:
+        #    if len(v) >= self.max_length_1:
+        #        raise AccountCreationError('Value too long: {}'.format(str(v)[2:-1][:64]))
+        #for vi in [_hash, misc]:
+        #    if len(v) >= self.max_length_2:
+        #        raise AccountCreationError('Hash or desc. too long: {}'.format(str(v)[2:-1][:64]))
 
         # remove whitespace, single-quotes, and backslashes
         self.email = email.strip().lower().translate(None, b"'\\")
@@ -73,7 +78,13 @@ class Account():
         # allows searching for additional information in the raw dump
         if not self.email or (self.username and (self.password or self.misc)):
             # print(email, username, password, _hash, misc)
-            raise AccountCreationError('Not enough information to create account:\n{}'.format(str(self)[:128]))
+            raise AccountCreationError('Not enough information to create account:\n{}'.format(str(self)[:64]))
+
+        # truncate values if longer than max length
+        self.email = self.email[-self.max_length_1:]
+        self.username = self.username[:self.max_length_1]
+        self.password = self.password[:self.max_length_1]
+        self.misc = self.misc[-self.max_length_2:]
 
 
     @property
@@ -83,6 +94,9 @@ class Account():
 
 
     def document(self, id_only=False):
+        '''
+        note: values must be truncated again here because they may become longer when decoded
+        '''
 
         doc = dict()
 
@@ -90,17 +104,18 @@ class Account():
             doc['_id'] = self.to_object_id()
             if not id_only:
                 if self.email:
-                    doc['email'], doc['domain'] = self.decode(self.email).split('@')[:2]
-                    doc['domain'] = doc['domain'][::-1]
+                    email, domain = self.decode(self.email).split('@')[:2]
+                    doc['email'] = email[-self.max_length_1:]
+                    doc['domain'] = domain[-self.max_length_1:][::-1]
                 if self.username:
-                    doc['username'] = self.decode(self.username)
+                    doc['username'] = self.decode(self.username)[:self.max_length_1]
                 if self.password:
-                    doc['password'] = self.decode(self.password)
+                    doc['password'] = self.decode(self.password)[:self.max_length_1]
                 if self.misc:
-                    doc['misc'] = self.decode(self.misc)
+                    doc['misc'] = self.decode(self.misc)[-self.max_length_2:]
 
         except ValueError:
-            errprint('[!] Error formatting {}'.format(str(self.to_bytes())[:64]))
+            raise AccountCreationError('[!] Error formatting {}'.format(str(self.to_bytes())[:64]))
 
         return doc
 

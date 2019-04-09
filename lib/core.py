@@ -2,8 +2,9 @@
 
 # by TheTechromancer
 
-# to fix:
-# threads seem to stay alive after finishing
+# TODO:
+# fix ObjectID so that _id == (domain.com) + (hash(entire account including domain))
+#  - because asdf@domain.com has the same id as asdf@other.domain.com
 '''
     $ pstree | grep pyth                                                                                                                                                     
             |-python3.7---2*[{python3.7}]                                                                                                                                                         

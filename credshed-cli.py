@@ -153,6 +153,9 @@ if __name__ == '__main__':
     except AssertionError as e:
         errprint('\n\n[!] {}'.format(str(e)))
 
+    except KeyboardInterrupt:
+        errprint('\n\n[!] Interrupted')
+
     finally:
         try:
             outfile.close()
