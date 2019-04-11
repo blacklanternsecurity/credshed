@@ -1,72 +1,37 @@
-version: '2'
+# by TheTechromancer
 
+version: '3'
 
 services:
 
-  ## Config Servers
-  config0:
+  ## MongoDB main DB
+  mongo_main:
     image: mongo
-    command: mongod --port 27017 --configsvr --replSet configserver --noprealloc --smallfiles --oplogSize 16 --bind_ip_all
-    volumes:
-      - ./mongo_scripts:/scripts
-#    networks:
-#      - mongo_sharded
-
-  config1:
-    image: mongo
-    command: mongod --port 27017 --configsvr --replSet configserver --noprealloc --smallfiles --oplogSize 16 --bind_ip_all
-    volumes:
-      - ./mongo_scripts:/scripts
-#    networks:
-#      - mongo_sharded
-
-  ## Shards
-  shard0a:
-    image: mongo
-    command: mongod --port 27018 --shardsvr --replSet shard0 --noprealloc --smallfiles --oplogSize 16 --bind_ip_all
-    volumes:
-      - ./mongo_scripts:/scripts
-      - $mongo_dir_0:/data/db:delegated
-#    networks:
-#      - mongo_sharded
-
-  shard1a:
-    image: mongo
-    command: mongod --port 27018 --shardsvr --replSet shard1 --noprealloc --smallfiles --oplogSize 16 --bind_ip_all
-    volumes:
-      - ./mongo_scripts:/scripts
-      - $mongo_dir_1:/data/db:delegated
-#    networks:
-#      - mongo_sharded
-
-
-  ## Router
-  router:
-    image: mongo
-    command: mongos --port 27017 --configdb configserver/config0:27017,config1:27017 --bind_ip_all
+    # feel free to change hard-coded memory limits to match your hardware requirements
+    command: mongod --bind_ip_all --setParameter maxIndexBuildMemoryUsageMegabytes=32000 --setParameter diagnosticDataCollectionEnabled=false --wiredTigerCacheSizeGB 20
     ports:
       - "127.0.0.1:27017:27017"
     volumes:
-      - ./mongo_scripts:/scripts
-    depends_on:
-      - config0
-      - config1
-      - shard0a
-      - shard1a
-#    networks:
-#      - mongo_sharded
+      - $mongo_main_dir:/data/db:delegated
+    ulimits:
+      nproc: 65535
+      nofile:
+        soft: 100000
+        hard: 200000
 
 
-  ## Redis
-  redis:
-    image: redis
+
+  ## MongoDB for account metadata
+  mongo_meta:
+    image: mongo
+    # feel free to change hard-coded memory limits to match your hardware requirements
+    command: mongod --bind_ip_all --setParameter maxIndexBuildMemoryUsageMegabytes=32000 --setParameter diagnosticDataCollectionEnabled=false --wiredTigerCacheSizeGB 20
     ports:
-      - "127.0.0.1:6379:6379"
+      - "127.0.0.1:27018:27017"
     volumes:
-      - "$redis_dir:/data:delegated"
-    entrypoint: redis-server --maxmemory 5000000000 --maxmemory-policy allkeys-random
-
-
-
-#networks:
-#  mongo_sharded:
+      - $mongo_meta_dir:/data/db:delegated
+    ulimits:
+      nproc: 65535
+      nofile:
+        soft: 100000
+        hard: 200000

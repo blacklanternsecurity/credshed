@@ -1,15 +1,14 @@
 #!/usr/bin/env python3.7
 
+# by TheTechromancer
+
 import re
 import sys
 import base64
 import hashlib
+from lib.errors import *
 from pathlib import Path
 from datetime import datetime
-
-
-class AccountCreationError(Exception):
-    pass
 
 
 def errprint(*s, end='\n'):
@@ -23,38 +22,64 @@ class Account():
     # cut down on memory usage by not using a dictionary
     __slots__ = ['email', 'username', 'password', 'misc']
 
+    # for checking if string is an email
     email_regex = re.compile(r'^([a-zA-Z0-9_\-\.\+]+)@([a-zA-Z0-9_\-\.]+)\.([a-zA-Z]{2,8})$')
+    # same thing but for raw bytes
     email_regex_bytes = re.compile(rb'^([a-zA-Z0-9_\-\.\+]+)@([a-zA-Z0-9_\-\.]+)\.([a-zA-Z]{2,8})$')
+    # for searching for email in string
+    email_regex_search_bytes = re.compile(rb'([a-zA-Z0-9_\-\.\+]+)@([a-zA-Z0-9_\-\.]+)\.([a-zA-Z]{2,8})')
+    # less-strict version
+    fuzzy_email_regex = re.compile(r'^(.+)@(.+)\.(.+)')
+    # same thing but for raw bytes
+    fuzzy_email_regex_bytes = re.compile(rb'^(.+)@(.+)\.(.+)')
 
     def __init__(self, email=b'', username=b'', password=b'', _hash=b'', misc=b''):
 
+        # abort if values are too long
+        # saves the regexes from choking the CPU
+        for v in [email, username, password]:
+            if len(v) >= 128:
+                raise AccountCreationError('Value too long: {}'.format(str(v)[2:-1][:64]))
+        for vi in [_hash, misc]:
+            if len(v) >= 512:
+                raise AccountCreationError('Hash or desc. too long: {}'.format(str(v)[2:-1][:64]))
+
         # remove whitespace, single-quotes, and backslashes
-        self.email = email.strip().lower().replace(b"'", b'').replace(b'\\', b'')
-        self.username = username.strip()
+        self.email = email.strip().lower().translate(None, b"'\\")
+        self.username = username.strip().translate(None, b"'\\")
+        self.misc = misc.strip()
+
+        if not self.email:
+            if self.is_email(self.username):
+                # errprint('\n[+] Username "{}" is an email'.format(str(self.username)))
+                self.email = self.username.lower()
+                self.username = b''
+
+        else:
+            if not self.email_regex_bytes.match(self.email):
+                #errprint('[*] Invalid email: {}'.format(self.email))
+                if not self.username:
+                    # errprint('\n[+] Changing to username')
+                    self.username = self.email                    
+                self.email = b''
+
         if _hash and not password:
             self.password = _hash.strip()
         else:
             self.password = password
-        self.misc = misc.strip()
 
-        if email:
-            if not self.email_regex_bytes.match(email):
-                if not username:
-                    self.username = email
-                else:
-                    errprint('\n[*] Invalid email: {}'.format(email))
-                self.email = b''
+        # keeping a username or email by itself is sometimes useful
+        # if not strictly for OSINT purposes, at least knowing which leaks it was a part of
+        # allows searching for additional information in the raw dump
+        if not (self.email or self.username): # and (self.password or self.misc) ):
+            # print(email, username, password, _hash, misc)
+            raise AccountCreationError('Must have either username or email:\n{}'.format(str(self)[:128]))
 
-        elif self.is_email(username) and not self.email:
-            self.email = username.lower()
-            self.username = b''
 
-        if not ( (self.email or self.username) and (self.password or self.misc) ):
-            raise AccountCreationError('need either username or email and either a password or misc description')
+    @property
+    def _id(self):
 
-        for v in [self.email, self.username, self.password]:
-            if len(v) >= 255:
-                raise AccountCreationError('Value {} is too long'.format(str(v)[2:-1]))
+        return self.to_object_id()
 
 
     def document(self, id_only=False):
@@ -65,19 +90,28 @@ class Account():
             doc['_id'] = self.to_object_id()
             if not id_only:
                 if self.email:
-                    doc['email'], doc['domain'] = self.email.decode(encoding='utf-8').split('@')[:2]
+                    doc['email'], doc['domain'] = self.decode(self.email).split('@')[:2]
                     doc['domain'] = doc['domain'][::-1]
-                if self.username: doc['username'] = self.username.decode(encoding='utf-8')
-                if self.password: doc['password'] = self.password.decode(encoding='utf-8')
-                if self.misc: doc['misc'] = self.misc.decode(encoding='utf-8')
+                if self.username:
+                    doc['username'] = self.decode(self.username)
+                if self.password:
+                    doc['password'] = self.decode(self.password)
+                if self.misc:
+                    doc['misc'] = self.decode(self.misc)
 
-        except UnicodeDecodeError as e:
-            errprint('\n[!] Error decoding {}'.format(str(self.to_bytes())))
-            return None
         except ValueError:
-            errprint('\n[!] Error formatting {}'.format(str(self.to_bytes())))
+            errprint('[!] Error formatting {}'.format(str(self.to_bytes())[:64]))
 
         return doc
+
+
+    @staticmethod
+    def decode(b):
+
+        try:
+            return b.decode(encoding='utf-8')
+        except UnicodeDecodeError:
+            return str(b)[2:-1]
 
 
     @classmethod
@@ -92,11 +126,15 @@ class Account():
         username = self._if_key_exists(document, 'username')
         password = self._if_key_exists(document, 'password')
         misc = self._if_key_exists(document, 'misc')
-        return Account(email, username, password, misc)
+        return Account(email=email, username=username, password=password, misc=misc)
 
 
     @classmethod
     def is_email(self, email):
+
+        # abort if value is too long
+        if len(email) > 128:
+            return False
 
         try:
             if self.email_regex.match(email):
@@ -106,6 +144,23 @@ class Account():
                 return True
 
         return False
+
+
+    @classmethod
+    def is_fuzzy_email(self, email):
+
+        if len(email) > 128:
+            return False
+
+        try:
+            if self.fuzzy_email_regex.match(email):
+                return True
+        except TypeError:
+            if self.fuzzy_email_regex_bytes.match(email):
+                return True
+
+        return False
+
 
 
     @staticmethod
@@ -163,10 +218,7 @@ class Account():
 
     def __str__(self):
 
-        try:
-            return ':'.join((self.email.decode(), self.username.decode(), self.password.decode(), self.misc.decode()))
-        except UnicodeDecodeError:
-            return str(self.to_bytes(delimiter=b':'))[2:-1]
+        return ':'.join([self.decode(b) for b in [self.email, self.username, self.password, self.misc]])
 
 
 

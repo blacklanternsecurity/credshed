@@ -1,50 +1,13 @@
 #!/usr/bin/env python3.7
-'''
 
-try and fix background/foreground issue
-
-    Traceback (most recent call last):
-      File "/usr/lib/python3.7/multiprocessing/process.py", line 297, in _bootstrap
-        self.run()
-      File "/usr/lib/python3.7/multiprocessing/process.py", line 99, in run
-        self._target(*self._args, **self._kwargs)
-      File "/mnt/s1/leak/bin/lib/db.py", line 389, in _add_batches
-        unique_accounts += mthread.result()
-      File "/usr/lib/python3.7/concurrent/futures/_base.py", line 425, in result
-        return self.__get_result()
-      File "/usr/lib/python3.7/concurrent/futures/_base.py", line 384, in __get_result
-        raise self._exception
-      File "/usr/lib/python3.7/concurrent/futures/thread.py", line 57, in run
-        result = self.fn(*self.args, **self.kwargs)
-      File "/mnt/s1/leak/bin/lib/db.py", line 419, in _mongo_add_batch
-        _mongo.counters.update_one({'collection': 'sources'}, {'$inc': {str(source_id): len(mongo_batch)}}, upsert=True)
-      File "/home/user/.local/lib/python3.7/site-packages/pymongo/collection.py", line 995, in update_one
-        session=session),
-      File "/home/user/.local/lib/python3.7/site-packages/pymongo/collection.py", line 851, in _update_retryable
-        _update, session)
-      File "/home/user/.local/lib/python3.7/site-packages/pymongo/mongo_client.py", line 1248, in _retryable_write
-        return self._retry_with_session(retryable, func, s, None)
-      File "/home/user/.local/lib/python3.7/site-packages/pymongo/mongo_client.py", line 1201, in _retry_with_session
-        return func(session, sock_info, retryable)
-      File "/home/user/.local/lib/python3.7/site-packages/pymongo/collection.py", line 847, in _update
-        retryable_write=retryable_write)
-      File "/home/user/.local/lib/python3.7/site-packages/pymongo/collection.py", line 817, in _update
-        retryable_write=retryable_write).copy()
-      File "/home/user/.local/lib/python3.7/site-packages/pymongo/pool.py", line 584, in command
-        self._raise_connection_failure(error)
-      File "/home/user/.local/lib/python3.7/site-packages/pymongo/pool.py", line 743, in _raise_connection_failure
-        _raise_connection_failure(self.address, error)
-      File "/home/user/.local/lib/python3.7/site-packages/pymongo/pool.py", line 283, in _raise_connection_failure
-        raise AutoReconnect(msg)
-    pymongo.errors.AutoReconnect: localhost:27017: [Errno 32] Broken pipe
-'''
+# by TheTechromancer
 
 import copy
 import time
 import queue
-import redis
 import pymongo
 from .leak import *
+from .errors import *
 from time import sleep
 import multiprocessing
 from hashlib import sha1
@@ -57,37 +20,50 @@ class DB():
 
     def __init__(self):
 
-        ### MONGO ###
-        self.client = pymongo.MongoClient('127.0.0.1', 27017)
-        # self.noshard_client = pymongo.MongoClient('127.0.0.1', 27019)
-        # databases
-        self.db = self.client['credshed']
-        #self.noshard_db = self.noshard_client['credshed']
-        # accounts
-        self.accounts = self.db.accounts
+        try:
+
+            ### MONGO ###
+
+            # main DB
+            self.main_client = pymongo.MongoClient('127.0.0.1', 27017)
+            self.main_db = self.main_client['credshed']
+
+            # accounts
+            try:
+                self.main_db.create_collection('accounts')
+            except pymongo.errors.CollectionInvalid:
+                pass
+            self.accounts = self.main_db.accounts
+
+            # meta DB (account metadata including source information, counters, leak <--> account associations, etc.)
+            self.meta_client = pymongo.MongoClient('127.0.0.1', 27018)
+            self.meta_db = self.meta_client['credshed']
+
+            try:
+                self.meta_db.create_collection('account_tags')
+            except pymongo.errors.CollectionInvalid:
+                pass
+
+        except pymongo.errors.PyMongoError as e:
+            error = str(e) + '\n'
+            try:
+                error += str(e.details)
+            except AttributeError:
+                pass
+            raise CredShedDatabaseError(error)
+
+
+        self.account_tags = self.meta_db.account_tags
 
         #self.accounts.create_index([('id', pymongo.ASCENDING)])
         #self.accounts.create_index([('username', pymongo.ASCENDING)], sparse=True, background=True)
         #self.accounts.create_index([('domain', pymongo.ASCENDING)], sparse=True, background=True)
         #self.accounts.create_index([('password', pymongo.ASCENDING), ('username', pymongo.ASCENDING)], sparse=True, background=True)
-        #self.accounts.create_index([('email', pymongo.ASCENDING), ('password', pymongo.ASCENDING)], sparse=True, background=True)
 
-        # "warm up" the indexes (load them into memory)
-        # roughly equivalent to the "touch" db command in mmap
-        # https://grokbase.com/t/gg/mongodb-user/154qhs7402/warming-up-index-data-is-wiredtiger
-        # index_char_range = ['a','b','c','d','e','f','g','h','i','j','k','l','m','n','o','p','q','r','s','t','u','v','w','x','y','z','0','1','2','3','4','5','6','7','8','9']
-        # self.accounts.find({'email': {'$in': index_char_range }, 'password': {'$in': index_char_range } }).count()
-        # self.accounts.find({'domain': {'$in': index_char_range } }).count()
-        # self.accounts.find({'password': {'$in': index_char_range }, 'username': {'$in': index_char_range } }).count()
-        # self.accounts.find({'username': {'$in': index_char_range } }).count()
-        # self.db.command('touch', 'accounts', index=True)
         # sources
-        self.sources = self.db.sources
+        self.sources = self.meta_db.sources
         # counters
-        self.counters = self.db.counters
-
-        ### REDIS ###
-        self.redis = redis.StrictRedis()
+        self.counters = self.meta_db.counters
 
         # leak-specific counters
         self.leak_unique = 0
@@ -95,10 +71,15 @@ class DB():
         self.leak_size = 0
 
 
-    def find(self, keywords, password=False, misc=False):
+    def search(self, keywords, query_type='email', max_results=10000):
         '''
-        ~ 2 minutes to regex-search 100M-entry DB
+        ~ 2 minutes to regex-search non-indexed 100M-entry DB
         '''
+
+        query_type = str(query_type).strip().lower()
+
+        if type(keywords) == str:
+            keywords = [keywords,]
 
         results = dict()
 
@@ -126,35 +107,57 @@ class DB():
                 #results['emails'] = self.accounts.find({'email': {'$regex': main_keyword}})
             '''
 
+            if query_type == 'email':
+                try:
+                    email, domain = keyword.lower().split('@')[:2]
+                    domain_hash = base64.b64encode(sha1(b'.'.join(domain.lower().encode().split(b'.')[-2:])).digest()).decode()[:6]
+                    query_regex = r'^{}.*'.format(domain_hash).replace('+', r'\+')
+                    query = {'$and': [{'email': email}, {'_id': {'$regex': query_regex}}]}
+                    results['emails'] = self.accounts.find(query).limit(max_results)
+                    #results['emails'] = self.accounts.find({'email': email, '_id': {'$regex': domain_regex}})
+                    #results['emails'] = self.accounts.find({'email': email})
 
-            try:
-                email, domain = keyword.lower().split('@')[:2]
-                domain_keyword = base64.b64encode(sha1(b'.'.join(domain.lower().encode().split(b'.')[-2:])).digest()).decode()[:6]
-                domain_regex = r'^{}.*'.format(domain_keyword).replace('+', r'\+')
-                errprint('[+] Searching by full email')
-                query = {'$and': [{'email': email}, {'_id': {'$regex': domain_regex}}]}
-                #errprint(query)
-                results['emails'] = self.accounts.find(query)
-                #results['emails'] = self.accounts.find({'email': email, '_id': {'$regex': domain_regex}})
-                #results['emails'] = self.accounts.find({'email': email})
-            except ValueError:
+                except ValueError:
+                    # assume email only
+                    email = r'^{}$'.format(keyword.lower())
+                    query = {'email': {'$regex': email}}
+                    results['emails'] = self.accounts.find(query).limit(max_results)
+
+
+            elif query_type == 'domain':
                 domain = keyword.lower()
-                domain_keyword = base64.b64encode(sha1(b'.'.join(keyword.lower().encode().split(b'.')[-2:])).digest()).decode()[:6]
-                domain_regex = r'^{}.*'.format(domain_keyword).replace('+', r'\+')
-                errprint('[+] Searching by domain')
-                query = {'_id': {'$regex': domain_regex}}
+                domain_hash = base64.b64encode(sha1(b'.'.join(keyword.lower().encode().split(b'.')[-2:])).digest()).decode()[:6]
+                query_regex = r'^{}.*'.format(domain_hash).replace('+', r'\+')
+                num_sections = len(domain.split('.'))
+                if domain.count('.') == 1:
+                    query = {'_id': {'$regex': query_regex}}
+                else:
+                    domain_keyword = '.'.join(domain.split('.')[-(subdomains+1):])[::-1]
+                    domain_query = r'^{}.*'.format(domain_keyword)
+                    query = {'$and': [{'_id': {'$regex': query_regex}}, {'domain': {'$regex': domain_query}}]}
                 #errprint(query)
-                results['emails'] = self.accounts.find(query)
+                results['emails'] = self.accounts.find(query).limit(max_results)
+
+            elif query_type == 'username':
+                query_regex = r'^{}$'.format(keyword).replace('+', r'\+')
+                query = {'username': {'$regex': query_regex}}
+                #errprint(query)
+                results['usernames'] = self.accounts.find(query).limit(max_results)
+
+            else:
+                raise CredShedError('Invalid query type: {}'.format(str(query_type)))
 
             for category in results:
                 for result in results[category]:
-                    yield Account.from_document(result)
-
+                    try:
+                        yield Account.from_document(result)
+                    except AccountCreationError as e:
+                        errprint('[!] {}'.format(str(e)))
             
 
 
 
-    def add_leak(self, leak, num_threads=2):
+    def add_leak(self, leak, num_threads=4):
         '''
         benchmarks for adding 1M accounts:
             (best average: ~62,500 per second)
@@ -201,20 +204,28 @@ class DB():
                     Time Elapsed: 0 hours, 26 minutes, 46 seconds
 
         Benchmarks for Exploit.in:
-        16 threads (with tmpfs):
-            [+] Total Accounts: 684,676,603
-            [+] Unique Accounts: 684,676,603 (100.0%)
-            [+] Time Elapsed: 7 hours, 21 minutes, 27 seconds
-        16 threads (with tmpfs + rsync every 30 minutes)
-            [+] Total Accounts: 684,676,603
-            [+] Unique Accounts: 649,522,395 (94.9%)
-            [+] Time Elapsed: 9 hours, 2 minutes, 28 seconds
+            16 threads (with tmpfs):
+                [+] Total Accounts: 684,676,603
+                [+] Unique Accounts: 684,676,603 (100.0%)
+                [+] Time Elapsed: 7 hours, 21 minutes, 27 seconds
+            16 threads (with tmpfs + rsync every 30 minutes)
+                [+] Total Accounts: 684,676,603
+                [+] Unique Accounts: 649,522,395 (94.9%)
+                [+] Time Elapsed: 9 hours, 2 minutes, 28 seconds
+
+        Benchmarks for bigDB:
+            11 threads on IBM, mongo + mongo meta (3-2-2019)
+                [+] Total Accounts: 2,674,862,578
+                [+] Unique Accounts: 1,093,289,423 (40.9%)
+                [+] Time Elapsed: 66 hours, 17 minutes, 16 seconds
+                (675,470 per minute)
         '''
 
+        pool = []
         try:
 
-            errprint('[+] Adding leak')
-            errprint('[+] Using {} threads'.format(num_threads))
+            #errprint('[+] Adding leak')
+            #errprint('[+] Using {} threads'.format(num_threads))
 
             try:
                 self.leak_size = len(leak)
@@ -223,57 +234,97 @@ class DB():
 
             source_id = self.add_source(leak.source)
             start_time = time.time()
-            batch_queue = multiprocessing.Queue(num_threads*2)
-            result_queue = multiprocessing.Queue(num_threads)
+            batch_queue = multiprocessing.Queue(num_threads*10)
+            result_queue = multiprocessing.Queue(num_threads*10)
+            comms_queue = multiprocessing.Queue(num_threads*10)
 
-            pool = []
-            #pipes = []
-            for i in range(num_threads):
-                #receiver, sender = multiprocessing.Pipe(duplex=False)
-                # errprint('starting process #{}'.format(i))
-                p = multiprocessing.Process(target=self._add_batches, args=(batch_queue, result_queue, source_id))
-                pool.append(p)
-                p.start()
-                #pipes.append(sender)
+            # in my experience, there's no such thing as luck
+            p = [None]
+            for thread_id in range(num_threads):
+                while 1:
+                    p[0] = multiprocessing.Process(target=self._add_batches, args=(batch_queue, result_queue, comms_queue, source_id), daemon=True)
+                    sleep(.1)
+                    p[0].start()
+                    sleep(.2)
 
-            #i = 0
+                    # These poor threads have chronic suicidial depression
+                    # make sure they actually start instead of immediately hanging themselves
+                    try:
+                        comms_queue.get_nowait()
+                        pool.append(p[0])
+                        #errprint('[+] Worker started')
+                        #errprint('[+] Thread {} started successfully'.format(thread_id))
+                        break
+                    except queue.Empty:
+                        #errprint('[+] Thread {} failed to start, terminating'.format(thread_id))
+                        p[0].terminate()
+                        sleep(.1)
+                        p.clear()
+                        p = [None]
+                        continue
+
+
+            # stuff it down the pipes
             for batch in self._gen_batches(leak, source_id):
-                #pipes[i%num_threads].send(batch)
                 batch_queue.put(batch)
-                errprint('\r[+] {:,}{}  '.format(self.leak_overall, (' ({:.3f})%'.format(self.leak_overall / self.leak_size * 100) if self.leak_size else '')), end='')
-                #i += 1
-            errprint()
 
-            # sending shutdown signal to threads
-            for q in range(num_threads+1):
+            # send shutdown signal to threads
+            for _ in range(num_threads):
                 batch_queue.put(None)
 
-            for p in pool:
-                p.join()
-            
             # retrieve counters from finished processes
+            threads_finished = 0
             while 1:
                 try:
-                    self.leak_unique += result_queue.get_nowait()
+                    new_accounts = result_queue.get_nowait()
+                    if new_accounts is None:
+                        #errprint('[+] Worker finished')
+                        threads_finished += 1
+                        if threads_finished == num_threads:
+                            break
+                    else:
+                        self.leak_unique += new_accounts
+                        self.counters.update_one({'collection': 'sources'}, {'$set': {str(source_id): self.leak_overall}}, upsert=True)
+                except queue.Empty:
+                    #print('threads finished: {}/{}'.format(threads_finished, num_threads))
+                    #print('threads alive: ' + str([p.is_alive() for p in pool]))
+                    sleep(1)
+                    continue
+
+            # retrieve any errors:
+            errors = []
+            while 1:
+                try:
+                    errors.append(comms_queue.get_nowait())
                 except queue.Empty:
                     break
 
             end_time = time.time()
             time_elapsed = (end_time - start_time)
 
+            import_result = ''
             if self.leak_overall > 0:
-                errprint('\n[+] Total Accounts: {:,}'.format(self.leak_overall))
-                errprint('[+] Unique Accounts: {:,} ({:.1f}%)'.format(self.leak_unique, ((self.leak_unique/self.leak_overall)*100)))
-                errprint('[+] Time Elapsed: {} hours, {} minutes, {} seconds\n'.format(int(time_elapsed/3600), int((time_elapsed%3600)/60), int((time_elapsed%3600)%60)))
+                import_result += '[+] Import results for "{}"\n'.format(leak.source.name)
+                import_result += '[+]    total accounts: {:,}\n'.format(self.leak_overall)
+                import_result += '[+]    unique accounts: {:,} ({:.1f}%)\n'.format(self.leak_unique, ((self.leak_unique/self.leak_overall)*100))
+                import_result += '[+]    time elapsed: {} hours, {} minutes, {} seconds\n'.format(int(time_elapsed/3600), int((time_elapsed%3600)/60), int((time_elapsed%3600)%60))
+            if errors:
+                import_result += '[!] Errors:\n       {}'.format('\n       '.join(errors))
 
-        except KeyboardInterrupt:
-            [p.terminate() for p in pool]
-            raise KeyboardInterrupt
+            return import_result
+
         finally:
             # reset leak counters
             self.leak_unique = 0
             self.leak_overall = 0
             self.leak_size = 0
+            # let the bodies hit the floor
+            for p in pool:
+                p.terminate()
+                sleep(.1)
+                p.kill()
+                sleep(.1)
+                p.close()
 
 
     def remove_leak(self, source_id, batch_size=10000):
@@ -282,39 +333,39 @@ class DB():
         accounts_deleted = 0
         to_delete = []
 
-        errprint('[*] Deleting leak "{}{}"'.format(source.name, ':{}'.format(source.hashtype) if source.hashtype else ''))
+        errprint('\n[*] Deleting leak "{}{}"'.format(source.name, ':{}'.format(source.hashtype) if source.hashtype else ''))
 
         try:
 
-            # source_bytes = source_id.to_bytes(4, 'big')
-            for _id in self.redis.scan_iter('a:*'):
-                self.redis.lrem(_id, 0, source_id)
-                if not self.redis.exists(_id):
-                    to_delete.append(pymongo.DeleteOne({'_id': _id[2:].decode()}))
-                    #to_delete.append(_id[2:].decode())
-                    accounts_deleted += 1
-
-                if to_delete and accounts_deleted % batch_size == 0:
-                    #self.accounts.remove({'_id': {'$in': [d for d in to_delete]}})
-                    self.accounts.bulk_write([d for d in to_delete])
+            # delete accounts
+            for result in self.account_tags.find({'s': [source_id]}, {'_id': 1}):
+                to_delete.append(pymongo.DeleteOne(result))
+                if len(to_delete) % batch_size == 0:
+                    accounts_deleted += self.accounts.bulk_write(to_delete, ordered=False).deleted_count
                     to_delete.clear()
+                    errprint('\r[+] Deleted {:,} accounts'.format(accounts_deleted), end='')
 
             if to_delete:
-                #self.accounts.remove({'_id': {'$in': [d for d in to_delete]}})
-                self.accounts.bulk_write([d for d in to_delete])
+                accounts_deleted += self.accounts.bulk_write(to_delete, ordered=False).deleted_count
 
+            # delete out of tags collection
+            self.account_tags.delete_many({'s': [source_id]})
+            # pull source ID from affected accounts
+            self.account_tags.update_many({'s': source_id}, {'$pull': {'s': source_id}})
 
-            #accounts_deleted = self.accounts.delete_many({'sources': [source_id]}).deleted_count
-            # self.accounts.update_many({'sources': {'$in': [source_id]}}, {'$pull': {'sources': source_id}})
-            self.sources.delete_one({'_id': source_id})
+            errprint('\r[+] Deleted {:,} accounts'.format(accounts_deleted), end='')
+
+            self.sources.delete_many({'_id': source_id})
             self.counters.update_one({'collection': 'sources'}, {'$unset': {str(source_id): ''}})
+
 
         except TypeError as e:
             errprint(str(e))
             errprint('[!] Can\'t find source "{}:{}"'.format(source.name, source.hashtype))
 
-        errprint('[*] {:,} accounts deleted'.format(accounts_deleted))
+        errprint('\n[*] {:,} accounts deleted'.format(accounts_deleted))
         errprint('[*] Done')
+        # sleep(1)
         return accounts_deleted
 
 
@@ -322,8 +373,12 @@ class DB():
 
         source_doc = source.document(misc=False, date=False)
 
-        if self.sources.find_one(source_doc) is not None:
-            assert False, 'Source already exists'
+        source_in_db = self.sources.find_one(source_doc)
+        if source_in_db is not None:
+            source_id, source_name = source_in_db['_id'], source_in_db['name']
+            errprint('[*] Source ID {} ({}) already exists, merging'.format(source_id, source_name))
+            return source_id
+            #assert False, 'Source already exists'
         else:
             d = self.counters.find_one({'collection': 'sources'})
             id_counter = (d['id_counter'] if d else 0)
@@ -344,23 +399,24 @@ class DB():
         return id_counter
 
 
-    def show_stats(self, accounts=False, counters=False, sources=True, db=False):
+    def stats(self, accounts=False, counters=False, sources=True, db=False):
         '''
         prints database statistics
         returns most recently added source ID, if applicable
         '''
 
         most_recent_source_id = 0
+        stats = []
 
         try:
 
             if accounts:
-                accounts_stats = self.db.command('collstats', 'accounts', scale=1048576)
-                errprint('[+] Account Stats (MB):')
+                accounts_stats = self.main_db.command('collstats', 'accounts', scale=1048576)
+                stats.append('[+] Account Stats (MB):')
                 for k in accounts_stats:
                     if k not in ['wiredTiger', 'indexDetails', 'shards', 'raw']:
-                        errprint('\t{}: {}'.format(k, accounts_stats[k]))
-            errprint()
+                        stats.append('\t{}: {}'.format(k, accounts_stats[k]))
+            stats.append('')
 
             '''
             if counters:
@@ -380,37 +436,68 @@ class DB():
                     sources_stats[s['_id']] = Source(s['name'], s['hashtype'], s['misc'])
 
                 if sources_stats:
-                    errprint('[+] Leaks in DB:')
+                    stats.append('[+] Leaks in DB:')
                     for _id in sources_stats:
                         source = sources_stats[_id]
                         try:
                             source_size = ' [{:,}]'.format(self.counters.find_one({'collection': 'sources'})[str(_id)])
                         except KeyError:
                             source_size = ''
-                        most_recent_source_id = _id
 
-                        errprint('\t{}: {}{}'.format(_id, str(source), source_size))
-                    errprint()
+                        stats.append('\t{}: {}{}'.format(_id, str(source), source_size))
+                    stats.append('')
 
         except pymongo.errors.OperationFailure:
-            errprint('[!] No accounts added yet', end='\n\n')
+            stats.append('[!] No accounts added yet', end='\n\n')
 
         if db:
-            db_stats = self.db.command('dbstats', scale=1048576)
-            errprint('[+] DB Stats (MB):')
+            db_stats = self.main_db.command('dbstats', scale=1048576)
+            stats.append('[+] DB Stats (MB):')
             for k in db_stats:
-                errprint('\t{}: {}'.format(k, db_stats[k]))
+                stats.append('\t{}: {}'.format(k, db_stats[k]))
 
-        return most_recent_source_id
+        return '\n'.join(stats)
+
+
+
+    def most_recent_source_id(self):
+        '''
+        returns source with highest ID
+        or None if there are no leaks loaded
+        '''
+
+        source_ids = [s['_id'] for s in list(self.sources.find({}, {'_id': True}))]
+        if source_ids:
+            source_ids.sort()
+            return source_ids[-1]
+        else:
+            return None
+
+
+
+    def account_count(self):
+
+        try:
+            num_accounts_in_db = self.main_db.command('collstats', 'accounts', scale=1048576)['count']
+        except KeyError:
+            num_accounts_in_db = 0
+
+        return int(num_accounts_in_db)
 
 
     def get_source(self, _id):
 
         s = self.sources.find_one({'_id': int(_id)})
-        #try:
-        return Source(s['name'], s['hashtype'], s['misc'], s['date'])
-        #except (TypeError, KeyError):
-        #    return None
+        try:
+            return Source(s['name'], s['hashtype'], s['misc'])
+        except (TypeError, KeyError):
+            return None
+
+
+    def close(self):
+
+        self.main_client.close()
+        self.meta_client.close()
 
 
     def _gen_batches(self, leak, source_id, batch_size=10000):
@@ -423,8 +510,7 @@ class DB():
                 batch.append(account_doc)
                 self.leak_overall += 1
 
-            if batch and (self.leak_overall) % batch_size == 0:
-                #errprint('BATCH SIZE: {}'.format(len(batch)))
+            if batch and ((self.leak_overall) % batch_size == 0):
                 yield batch
                 batch = []
             
@@ -432,79 +518,146 @@ class DB():
             yield batch
 
 
-    def _add_batches(self, batch_queue, result_queue, source_id):
-        '''
-        1. upsert and get ObjectID:
+    def _add_batches(self, batch_queue, result_queue, comms_queue, source_id):
 
-            results = self.accounts.find(account.document(), {'_id': 1}, upsert=True)
-            for result in results:
-                object_id = result['_id'].binary
+        max_attempts = 3
 
-        2. append source to ObjectID in redis
-            - set ?
-
-        '''
-
-        errprint('[+] Worker started')
-
-        _redis = redis.StrictRedis()
-        _mongo = pymongo.MongoClient('127.0.0.1', 27017)['credshed']
+        mongo_main_client = pymongo.MongoClient('127.0.0.1', 27017)
+        mongo_meta_client = pymongo.MongoClient('127.0.0.1', 27018)
+        mongo_main = mongo_main_client['credshed']
+        mongo_meta = mongo_meta_client['credshed']
         unique_accounts = 0
 
-        for batch in iter(batch_queue.get, None):
+        try:
+            comms_queue.put(True)
+            sleep(1)
 
-            with concurrent.futures.ThreadPoolExecutor() as thread_executor:
+            while 1:
+                try:
+                    #errprint('[+] Getting batch')
+                    num_inserted = 0
+                    batch = batch_queue.get_nowait()
 
-                mthread = thread_executor.submit(self._mongo_add_batch, _mongo, source_id, copy.deepcopy(batch))
-                rthread = thread_executor.submit(self._redis_add_batch, _redis, source_id, batch)
+                    if batch is None:
+                        break
+                    else:
+                        '''
+                        timeout_value = (int(len(batch) / 500)) + (5 * max_attempts) + 1
+                        try:
+                            with concurrent.futures.ThreadPoolExecutor(max_workers=2) as thread_executor:
 
-                thread_executor.shutdown(wait=True)
-                unique_accounts += mthread.result()
+                                main_thread = thread_executor.submit(self._mongo_main_add_batch, mongo_main, source_id, copy.deepcopy(batch))
+                                meta_thread = thread_executor.submit(self._mongo_meta_add_batch, mongo_meta, source_id, batch)
+
+                            num_inserted = main_thread.result(timeout=timeout_value)
+
+                        except concurrent.futures.TimeoutError:
+                            #comms_queue.put('"main" mongodb thread timed out after {:,} seconds'.format(timeout_value))
+                            continue
+
+                        finally:
+                            unique_accounts += num_inserted
+                        '''
+
+                        try:
+
+                            num_inserted = self._mongo_main_add_batch(mongo_main, source_id, copy.deepcopy(batch))
+                            self._mongo_meta_add_batch(mongo_meta, source_id, batch)
+
+                        except pymongo.errors.PyMongoError as e:
+                            error = str(e)
+                            try:
+                                error += (str(e.details))
+                            except AttributeError:
+                                pass
+                            comms_queue.put('Error in _add_batches():\n{}'.format(error))
+
+                        unique_accounts += num_inserted
 
 
-        result_queue.put(unique_accounts)
-        errprint('[+] Worker finished')
+                except queue.Empty:
+                    sleep(.1)
+                    continue
+
+        except KeyboardInterrupt:
+            #comms_queue.put('_add_batches() interrupted\n')
+            return
+
+        except Exception as e:
+            comms_queue.put('Error in _add_batches():\n{}'.format(str(e)))
+            return
+
+        finally:
+            try:
+                #mongo_main_client.close()
+                #mongo_meta_client.close()
+                result_queue.put(unique_accounts)
+                # send signal that thread is finished
+                result_queue.put(None)
+            except:
+                pass
+
 
 
 
     @staticmethod
-    def _redis_add_batch(_redis, source_id, batch):
-
-        for account_doc in batch:
-            _redis.lpush('a:' + account_doc['_id'], source_id)
-
-
-    @staticmethod
-    def _mongo_add_batch(_mongo, source_id, batch, max_attempts=3):
+    def _mongo_main_add_batch(_mongo, source_id, batch, max_attempts=3):
 
         unique_accounts = 0
         attempts_left = int(max_attempts)
         mongo_batch = []
+        error_details = ''
 
         for account_doc in batch:
             _id = account_doc.pop('_id')
-            # if "sources" array is stored in the document:
-            #  db.accounts.update(account_doc, {'$addToSet': {'sources': source_id}}, upsert=True)
             mongo_batch.append(pymongo.UpdateOne({'_id': _id}, {'$setOnInsert': account_doc}, upsert=True))
 
         while attempts_left > 0:
             try:
 
                 result = _mongo.accounts.bulk_write(mongo_batch, ordered=False)
-                _mongo.counters.update_one({'collection': 'sources'}, {'$inc': {str(source_id): len(mongo_batch)}}, upsert=True)
                 unique_accounts = result.upserted_count
                 return unique_accounts
 
             # sleep for a bit and try again if there's an error
             except (pymongo.errors.OperationFailure, pymongo.errors.InvalidOperation) as e:
-                errprint('\n[!] Error adding account batch.  Attempting to continue.\n{}'.format(str(e)))
                 try:
-                    errprint(e.details)
-                except:
+                    error_details = str(e.details)[:128]
+                except AttributeError:
                     pass
                 attempts_left -= 1
                 sleep(5)
                 continue
 
-        errprint('\n[!] Failed to add batch after {} tries'.format(max_attempts))
-        return unique_accounts
+        raise pymongo.errors.PyMongoError('Failed to add batch to main DB after {} tries'.format(max_attempts))
+
+
+
+    @staticmethod
+    def _mongo_meta_add_batch(_mongo, source_id, batch, max_attempts=3):
+
+        attempts_left = int(max_attempts)
+        mongo_tags_batch = []
+
+        for account_doc in batch:
+            _id = account_doc['_id']
+            mongo_tags_batch.append(pymongo.UpdateOne({'_id': _id}, {'$addToSet': {'s': source_id}}, upsert=True))
+
+        while attempts_left > 0:
+            try:
+
+                _mongo.account_tags.bulk_write(mongo_tags_batch, ordered=False)
+                return
+
+            # sleep for a bit and try again if there's an error
+            except (pymongo.errors.OperationFailure, pymongo.errors.InvalidOperation) as e:
+                #errprint('\n[!] Error adding account batch to meta DB.  Attempting to continue.\n{}'.format(str(e)[:64]))
+                #try:
+                #    errprint(str(e.details)[:64])
+                #except AttributeError:
+                #    pass
+                attempts_left -= 1
+                sleep(5)
+                continue
+
+        #errprint('\n[!] Failed to add batch to meta DB after {} tries'.format(max_attempts))

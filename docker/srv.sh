@@ -1,5 +1,7 @@
 #!/bin/bash
 
+# by TheTechromancer
+
 . ./.env
 
 usage()
@@ -31,6 +33,9 @@ start_daemon()
 	then
 		echo "dockremap:231000:65536" | sudo tee /etc/subgid >/dev/null 2>&1
 	fi
+
+	# cache sudo privileges to prevent script from dying
+	sudo echo -n ''
 
 	if ! pgrep dockerd >/dev/null
 	then
@@ -107,7 +112,7 @@ clean()
 
 delete_db()
 {
-	to_delete=( "$mongo_dir_0" "$mongo_dir_1" "$mongo_standalone_dir" "$redis_dir" "$elast_dir" )
+	to_delete=( "$mongo_main_dir" "$mongo_meta_dir" )
 
 	kill_dock
 	printf '\n[!] DELETING THESE DIRECTORIES - PRESS CTRL+C TO CANCEL\n\n'
@@ -137,29 +142,19 @@ delete_db()
 create_dirs()
 {
 
-	for _mongo_dir in "$mongo_dir_0" "$mongo_dir_1" "$mongo_standalone_dir"; do
-		if [ ! -d "$_mongo_dir" ]
+	mongo_dirs=( "$mongo_main_dir" "$mongo_meta_dir" )
+	for mongo_dir in "${to_delete[@]}"
+	do
+		if [ -n "$mongo_dir" -a ! -d "$mongo_dir" ]
 		then
-			sudo mkdir -p "$_mongo_dir"
-			sudo chown 231999:231999 "$_mongo_dir"
-			sudo chmod 770 "$_mongo_dir"
+			sudo mkdir -p "$mongo_dir"
+			sudo chown 231999:231999 "$mongo_dir"
+			sudo chmod 770 "$mongo_dir"
 		fi
 	done
-	if [ ! -d "$srv_dir" ]
+	if [ -n "$srv_dir" -a ! -d "$srv_dir" ]
 	then
 		sudo mkdir -p "$srv_dir"
-	fi
-	if [ ! -d "$redis_dir" ]
-	then
-		sudo mkdir -p "$redis_dir"
-		sudo chown 231999:231999 "$redis_dir"
-		sudo chmod 770 "$redis_dir"
-	fi
-	if [ ! -d "$elast_dir" ]
-	then
-		sudo mkdir -p "$elast_dir"
-		sudo chown 231000:231000 "$elast_dir"
-		sudo chmod 770 "$elast_dir"
 	fi
 
 }
