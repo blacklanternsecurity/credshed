@@ -131,7 +131,14 @@ class DB():
             elif query_type == 'domain':
                 domain = keyword.lower()
                 domain = re.escape(domain[::-1])
-                query_regex = r'^{}.*'.format(domain)
+
+                if domain.endswith('.'):
+                    # if query is like ".com"
+                    query_regex = r'^{}[\w.]*\|'.format(domain)
+                else:
+                    # or if query is like "example.com"
+                    query_regex = r'^{}[\.\|]'.format(domain)
+
                 num_sections = len(domain.split('.'))
                 query = {'_id': {'$regex': query_regex}}
                 errprint(query)
