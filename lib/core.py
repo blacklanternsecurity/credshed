@@ -81,6 +81,7 @@ Source description:  Unattended import at 2019-03-15T20:27:05.939
 
 import os
 import queue
+import random
 import threading
 from .db import DB
 from .leak import *
@@ -214,6 +215,10 @@ class CredShed():
                     while not self.STOP:
                         try:
                             for i in range(len(pool)):
+
+                                if self.STOP:
+                                    break
+
                                 t = pool[i]
                                 if t is None or not t.is_alive():
                                     if t is not None:
@@ -336,7 +341,7 @@ class CredShed():
 
 
 
-    def _add_by_file(self, dir_and_file):
+    def _add_by_file(self, dir_and_file, max_tries=5):
         '''
         takes iterable of directories and files in the format:
         [
@@ -346,101 +351,115 @@ class CredShed():
         '''
 
         # initialize database
-        db = DB()
 
-        try:
-
-            # if leak_file is None, assume leak_dir is just a standalone file
-            if dir_and_file[1] is None:
-                leak_file = dir_and_file[0]
-                leak_friendly_name = leak_file.name
-            else:
-                leak_dir, leak_friendly_name = dir_and_file
-                leak_file = leak_dir / leak_friendly_name
-
+        while not self.STOP and max_tries > 0:
 
             try:
-                q = QuickParse(file=leak_file, source_name=leak_friendly_name, unattended=self.unattended, strict=True)
+
+                db = DB()
+
+                # if leak_file is None, assume leak_dir is just a standalone file
+                if dir_and_file[1] is None:
+                    leak_file = dir_and_file[0]
+                    leak_friendly_name = leak_file.name
+                else:
+                    leak_dir, leak_friendly_name = dir_and_file
+                    leak_file = leak_dir / leak_friendly_name
+
+
+                try:
+                    q = QuickParse(file=leak_file, source_name=leak_friendly_name, unattended=self.unattended, strict=True)
+
+                except QuickParseError as e:
+                    e = '[!] {}'.format(str(e))
+                    e2 = '[*] Falling back to non-strict mode'
+                    self.comms_queue.put(e)
+                    self.comms_queue.put(e2)
+                    q = QuickParse(file=leak_file, source_name=leak_friendly_name, unattended=self.unattended, strict=False)
+                    #self.errors.append(e)
+                    #self.errors.append(e2)
+
+                except KeyboardInterrupt:
+                    if self.unattended:
+                        raise
+                    else:
+                        self.comms_queue.put('\n[*] Skipping {}'.format(str(leak_file)))
+                        return
+
+                leak = Leak(q.source_name, q.source_hashtype, q.source_misc)
+
+                try:
+                    # see if source already exists
+                    source_already_in_db = db.sources.find_one(leak.source.document(misc=False, date=False))
+
+                    if source_already_in_db:
+                        if not self.unattended:
+                            answer = input('Source ID {} ({}) already exists, merge? (Y/n)'.format(source_already_in_db['_id'], source_already_in_db['name'])) or 'y'
+                            if not answer.lower().startswith('y'):
+                                self.comms_queue.put('[*] Skipping existing source ID {} ({})'.format(source_already_in_db['_id'], source_already_in_db['name']))
+                                return
+
+                except pymongo.errors.PyMongoError as e:
+                    error = str(e)
+                    try:
+                        error += str(e.details)
+                    except AttributeError:
+                        pass
+                    comms_queue.put(error)
+
+                if not self.deduplication:
+                    # override set with generator
+                    leak.accounts = q.__iter__()
+
+                else:
+                    account_counter = 0
+                    self.comms_queue.put('[+] Deduplicating accounts')
+                    for account in q:
+                        if not self.STOP:
+                            #self._print(str(account))
+                            #try:
+                            leak.add_account(account)
+                            #except ValueError:
+                            #    continue
+                            account_counter += 1
+                            if account_counter % 1000 == 0:
+                                self._print('\r[+] {:,} '.format(account_counter), end='')
+                    self._print('\r[+] {:,}'.format(account_counter))
+
+
+                if self.output.name == '__db__':
+
+                    #print('\nAdding:\n{}'.format(str(leak)))
+                    #file_thread_executor.submit(db.add_leak, leak, num_threads=options.threads)
+                    #self._print('[{}] Calling db.add_leak()'.format(dir_and_file))
+                    self.comms_queue.put(db.add_leak(leak, num_threads=self.threads))
+                    #self._print('[{}] Finished calling db.add_leak()'.format(dir_and_file))
+
+                else:
+                    self._print('\n[+] Writing batch to {}\n'.format(str(self.output)))
+                    # open file in append mode because we may be parsing more than one file
+                    with open(str(self.output), 'wb+') as f:
+                        for account in leak:
+                            #self._print(str(account))
+                            f.write(account.to_bytes() + b'\n')
+                    #leak.dump()
 
             except QuickParseError as e:
-                e = '[!] {}'.format(str(e))
-                e2 = '[*] Falling back to non-strict mode'
-                self.comms_queue.put(e)
-                self.comms_queue.put(e2)
-                q = QuickParse(file=leak_file, source_name=leak_friendly_name, unattended=self.unattended, strict=False)
-                #self.errors.append(e)
-                #self.errors.append(e2)
+                self.comms_queue.put('[!] {}'.format(str(e)))
 
-            except KeyboardInterrupt:
-                if self.unattended:
-                    raise
-                else:
-                    self.comms_queue.put('\n[*] Skipping {}'.format(str(leak_file)))
-                    return
+            except CredShedDatabaseError as e:
+                self.comms_queue.put(str(e))
+                max_tries -= 1
+                continue
 
-            leak = Leak(q.source_name, q.source_hashtype, q.source_misc)
-
-            try:
-                # see if source already exists
-                source_already_in_db = db.sources.find_one(leak.source.document(misc=False, date=False))
-
-                if source_already_in_db:
-                    if not self.unattended:
-                        answer = input('Source ID {} ({}) already exists, merge? (Y/n)'.format(source_already_in_db['_id'], source_already_in_db['name'])) or 'y'
-                        if not answer.lower().startswith('y'):
-                            self.comms_queue.put('[*] Skipping existing source ID {} ({})'.format(source_already_in_db['_id'], source_already_in_db['name']))
-                            return
-
-            except pymongo.errors.PyMongoError as e:
-                error = str(e)
+            finally:
                 try:
-                    e += str(e.details)
-                except AttributeError:
+                    db.close()
+                    self.comms_queue.put('[+] Finished adding {}'.format(leak_file))
+                except UnboundLocalError:
                     pass
-                comms_queue.put(error)
 
-            if not self.deduplication:
-                # override set with generator
-                leak.accounts = q.__iter__()
-
-            else:
-                account_counter = 0
-                self.comms_queue.put('[+] Deduplicating accounts')
-                for account in q:
-                    if not self.STOP:
-                        #self._print(str(account))
-                        #try:
-                        leak.add_account(account)
-                        #except ValueError:
-                        #    continue
-                        account_counter += 1
-                        if account_counter % 1000 == 0:
-                            self._print('\r[+] {:,} '.format(account_counter), end='')
-                self._print('\r[+] {:,}'.format(account_counter))
-
-
-            if self.output.name == '__db__':
-
-                #print('\nAdding:\n{}'.format(str(leak)))
-                #file_thread_executor.submit(db.add_leak, leak, num_threads=options.threads)
-                #self._print('[{}] Calling db.add_leak()'.format(dir_and_file))
-                self.comms_queue.put(db.add_leak(leak, num_threads=self.threads))
-                #self._print('[{}] Finished calling db.add_leak()'.format(dir_and_file))
-
-            else:
-                self._print('\n[+] Writing batch to {}\n'.format(str(self.output)))
-                # open file in append mode because we may be parsing more than one file
-                with open(str(self.output), 'wb+') as f:
-                    for account in leak:
-                        #self._print(str(account))
-                        f.write(account.to_bytes() + b'\n')
-                #leak.dump()
-        except QuickParseError as e:
-            self.comms_queue.put('[!] {}'.format(str(e)))
-
-        finally:
-            self.comms_queue.put('[+] Finished adding {}'.format(leak_file))
-            db.close()
+            break
 
 
     def _tail_comms_queue(self):

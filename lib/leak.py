@@ -6,6 +6,7 @@ import re
 import sys
 import base64
 import hashlib
+from lib.util import *
 from lib.errors import *
 from pathlib import Path
 from datetime import datetime
@@ -81,10 +82,10 @@ class Account():
             raise AccountCreationError('Not enough information to create account:\n{}'.format(str(self)[:64]))
 
         # truncate values if longer than max length
-        self.email = self.email[-self.max_length_1:]
-        self.username = self.username[:self.max_length_1]
-        self.password = self.password[:self.max_length_1]
-        self.misc = self.misc[-self.max_length_2:]
+        self.email = clean_encoding(self.email)[-self.max_length_1:]
+        self.username = clean_encoding(self.username)[:self.max_length_1]
+        self.password = clean_encoding(self.password)[:self.max_length_1]
+        self.misc = clean_encoding(self.misc)[-self.max_length_2:]
 
 
     @property
@@ -93,6 +94,7 @@ class Account():
         return self.to_object_id()
 
 
+    @property
     def document(self, id_only=False):
         '''
         note: values must be truncated again here because they may become longer when decoded
@@ -104,40 +106,48 @@ class Account():
             doc['_id'] = self.to_object_id()
             if not id_only:
                 if self.email:
-                    email, domain = self.decode(self.email).split('@')[:2]
-                    doc['email'] = email[-self.max_length_1:]
-                    doc['domain'] = domain[-self.max_length_1:][::-1]
+                    doc['email'] = decode(self.split_email[0])
                 if self.username:
-                    doc['username'] = self.decode(self.username)[:self.max_length_1]
+                    doc['username'] = decode(self.username)
                 if self.password:
-                    doc['password'] = self.decode(self.password)[:self.max_length_1]
+                    doc['password'] = decode(self.password)
                 if self.misc:
-                    doc['misc'] = self.decode(self.misc)[-self.max_length_2:]
-
+                    doc['misc'] = decode(self.misc)
         except ValueError:
-            raise AccountCreationError('[!] Error formatting {}'.format(str(self.to_bytes())[:64]))
+            raise AccountCreationError('[!] Error formatting {}'.format(str(self.bytes)[:64]))
 
         return doc
 
 
-    @staticmethod
-    def decode(b):
+
+    @property
+    def split_email(self):
 
         try:
-            return b.decode(encoding='utf-8')
-        except UnicodeDecodeError:
-            return str(b)[2:-1]
+            email, domain = self.email.split(b'@')[:2]
+            return [email, domain]
+        except ValueError:
+            return [self.email, b'']
+
+
+
+    @property
+    def domain(self):
+        domain = self.email.split(b'@')[-1]
+
 
 
     @classmethod
     def from_document(self, document):
 
         try:
-            email = (document['email'] + '@' + document['domain'][::-1]).encode(encoding='utf-8')
+            email = (document['email'] + '@' + document['_id'].split('|')[0][::-1]).encode(encoding='utf-8')
         except KeyError:
             email = b''
         except UnicodeEncodeError:
             email = str(email)[2:-1] + b'@' + str(domain[::-1])[2:-1]
+        except ValueError:
+            raise AccountCreationError('Unable to determine domain from _id {}'.format(str(document['_id'])))
         username = self._if_key_exists(document, 'username')
         password = self._if_key_exists(document, 'password')
         misc = self._if_key_exists(document, 'misc')
@@ -189,24 +199,22 @@ class Account():
             return str(d[k])[2:-1]
 
 
-    def to_bytes(self, delimiter=b'\x00'):
+    @property
+    def bytes(self, delimiter=b'\x00'):
 
         return delimiter.join([self.email, self.username, self.password, self.misc])
 
 
     def to_object_id(self):
-        '''
-        poor man's domain index
-        if email exists, then first 6 characters are a hash of the domain
-        '''
 
+        account_hash = decode(base64.b64encode(hashlib.sha256(self.bytes).digest()[:12]))
+
+        domain_chunk = ''
         if self.email:
-            #return hashlib.sha1(b'.'.join(self.email.split(b'@')[1].split(b'.')[-2:])).digest()[:5] + hashlib.sha1(self.to_bytes()).digest()[:7]
-            domain_chunk = base64.b64encode(hashlib.sha1(b'.'.join(self.email.split(b'@')[1].split(b'.')[-2:])).digest()).decode()[:6]
-            main_chunk = base64.b64encode(hashlib.sha1(self.to_bytes()).digest()).decode()[:10]
-            return domain_chunk + main_chunk
-        else:
-            return base64.b64encode(hashlib.sha1(self.to_bytes()).digest())[:16].decode()
+            # _id begins with reversed domain
+            domain_chunk = decode(self.split_email[1][::-1])
+
+        return '|'.join([domain_chunk, account_hash])
 
 
     def __repr__(self):
@@ -233,7 +241,7 @@ class Account():
 
     def __str__(self):
 
-        return ':'.join([self.decode(b) for b in [self.email, self.username, self.password, self.misc]])
+        return ':'.join([decode(b) for b in [self.email, self.username, self.password, self.misc]])
 
 
 
@@ -333,7 +341,7 @@ class Leak():
         errprint('')
         '''
         for account in self.accounts:
-            sys.stdout.buffer.write(account.to_bytes() + b'\n')
+            sys.stdout.buffer.write(account.bytes + b'\n')
 
 
     def read(self, file):

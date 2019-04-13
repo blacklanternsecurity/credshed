@@ -7,6 +7,7 @@ import time
 import queue
 import pymongo
 from .leak import *
+from .util import *
 from .errors import *
 from time import sleep
 import multiprocessing
@@ -25,7 +26,7 @@ class DB():
             ### MONGO ###
 
             # main DB
-            self.main_client = pymongo.MongoClient('127.0.0.1', 27017)
+            self.main_client = pymongo.MongoClient('127.0.0.1', 27000)
             self.main_db = self.main_client['credshed']
 
             # accounts
@@ -36,7 +37,7 @@ class DB():
             self.accounts = self.main_db.accounts
 
             # meta DB (account metadata including source information, counters, leak <--> account associations, etc.)
-            self.meta_client = pymongo.MongoClient('127.0.0.1', 27018)
+            self.meta_client = pymongo.MongoClient('127.0.0.1', 27001)
             self.meta_db = self.meta_client['credshed']
 
             try:
@@ -110,9 +111,11 @@ class DB():
             if query_type == 'email':
                 try:
                     email, domain = keyword.lower().split('@')[:2]
-                    domain_hash = base64.b64encode(sha1(b'.'.join(domain.lower().encode().split(b'.')[-2:])).digest()).decode()[:6]
-                    query_regex = r'^{}.*'.format(domain_hash).replace('+', r'\+')
+                    email = re.escape(email)
+                    domain = re.escape(domain[::-1])
+                    query_regex = r'^{}.*'.format(domain)
                     query = {'$and': [{'email': email}, {'_id': {'$regex': query_regex}}]}
+                    errprint(query)
                     results['emails'] = self.accounts.find(query).limit(max_results)
                     #results['emails'] = self.accounts.find({'email': email, '_id': {'$regex': domain_regex}})
                     #results['emails'] = self.accounts.find({'email': email})
@@ -121,27 +124,23 @@ class DB():
                     # assume email only
                     email = r'^{}$'.format(keyword.lower())
                     query = {'email': {'$regex': email}}
+                    errprint(query)
                     results['emails'] = self.accounts.find(query).limit(max_results)
 
 
             elif query_type == 'domain':
                 domain = keyword.lower()
-                domain_hash = base64.b64encode(sha1(b'.'.join(keyword.lower().encode().split(b'.')[-2:])).digest()).decode()[:6]
-                query_regex = r'^{}.*'.format(domain_hash).replace('+', r'\+')
+                domain = re.escape(domain[::-1])
+                query_regex = r'^{}.*'.format(domain)
                 num_sections = len(domain.split('.'))
-                if domain.count('.') == 1:
-                    query = {'_id': {'$regex': query_regex}}
-                else:
-                    domain_keyword = '.'.join(domain.split('.')[-(subdomains+1):])[::-1]
-                    domain_query = r'^{}.*'.format(domain_keyword)
-                    query = {'$and': [{'_id': {'$regex': query_regex}}, {'domain': {'$regex': domain_query}}]}
-                #errprint(query)
+                query = {'_id': {'$regex': query_regex}}
+                errprint(query)
                 results['emails'] = self.accounts.find(query).limit(max_results)
 
             elif query_type == 'username':
-                query_regex = r'^{}$'.format(keyword).replace('+', r'\+')
+                query_regex = r'^{}$'.format(re.escape(keyword))
                 query = {'username': {'$regex': query_regex}}
-                #errprint(query)
+                errprint(query)
                 results['usernames'] = self.accounts.find(query).limit(max_results)
 
             else:
@@ -222,21 +221,23 @@ class DB():
         '''
 
         pool = []
+
+        #errprint('[+] Adding leak')
+        #errprint('[+] Using {} threads'.format(num_threads))
+
+        try:
+            self.leak_size = len(leak)
+        except TypeError:
+            self.leak_size = 0
+
+        start_time = time.time()
+        batch_queue = multiprocessing.Queue(num_threads*10)
+        result_queue = multiprocessing.Queue(num_threads*10)
+        comms_queue = multiprocessing.Queue(num_threads*10)
+
         try:
 
-            #errprint('[+] Adding leak')
-            #errprint('[+] Using {} threads'.format(num_threads))
-
-            try:
-                self.leak_size = len(leak)
-            except TypeError:
-                self.leak_size = 0
-
             source_id = self.add_source(leak.source)
-            start_time = time.time()
-            batch_queue = multiprocessing.Queue(num_threads*10)
-            result_queue = multiprocessing.Queue(num_threads*10)
-            comms_queue = multiprocessing.Queue(num_threads*10)
 
             # in my experience, there's no such thing as luck
             p = [None]
@@ -244,7 +245,11 @@ class DB():
                 while 1:
                     p[0] = multiprocessing.Process(target=self._add_batches, args=(batch_queue, result_queue, comms_queue, source_id), daemon=True)
                     sleep(.1)
-                    p[0].start()
+                    try:
+                        p[0].start()
+                    except AttributeError:
+                        # AttributeError: 'NoneType' object has no attribute 'poll'
+                        continue
                     sleep(.2)
 
                     # These poor threads have chronic suicidial depression
@@ -313,6 +318,14 @@ class DB():
 
             return import_result
 
+        except pymongo.errors.PyMongoError as e:
+            error = str(e)
+            try:
+                error += (str(e.details))
+            except AttributeError:
+                pass
+            comms_queue.put(CredShedDatabaseError(error))
+
         finally:
             # reset leak counters
             self.leak_unique = 0
@@ -320,11 +333,18 @@ class DB():
             self.leak_size = 0
             # let the bodies hit the floor
             for p in pool:
-                p.terminate()
-                sleep(.1)
-                p.kill()
-                sleep(.1)
-                p.close()
+                while 1:
+                    try:
+                        p.terminate()
+                        sleep(.1)
+                        p.kill()
+                        sleep(.1)
+                        p.close()
+                    except ValueError:
+                        # ValueError "Cannot close a process while it is still running."
+                        sleep(.1)
+                        continue
+                    break
 
 
     def remove_leak(self, source_id, batch_size=10000):
@@ -504,7 +524,7 @@ class DB():
 
         batch = []
         for account in leak:
-            account_doc = account.document()
+            account_doc = account.document
 
             if account_doc is not None:
                 batch.append(account_doc)
@@ -522,8 +542,8 @@ class DB():
 
         max_attempts = 3
 
-        mongo_main_client = pymongo.MongoClient('127.0.0.1', 27017)
-        mongo_meta_client = pymongo.MongoClient('127.0.0.1', 27018)
+        mongo_main_client = pymongo.MongoClient('127.0.0.1', 27000)
+        mongo_meta_client = pymongo.MongoClient('127.0.0.1', 27001)
         mongo_main = mongo_main_client['credshed']
         mongo_meta = mongo_meta_client['credshed']
         unique_accounts = 0
@@ -629,7 +649,7 @@ class DB():
                 sleep(5)
                 continue
 
-        raise pymongo.errors.PyMongoError('Failed to add batch to main DB after {} tries'.format(max_attempts))
+        raise CredShedDatabaseError('Failed to add batch to main DB after {} tries'.format(max_attempts))
 
 
 

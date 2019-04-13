@@ -91,7 +91,7 @@ services:
     image: mongo
     command: mongos --port 27017 --configdb main_configserver/main_config0:27017,main_config1:27017 --bind_ip_all
     ports:
-      - "127.0.0.1:27017:27017"
+      - "127.0.0.1:27000:27017"
     volumes:
       - ./mongo_scripts:/scripts
     depends_on:
@@ -160,7 +160,7 @@ services:
     image: mongo
     command: mongos --port 27017 --configdb meta_configserver/meta_config0:27017,meta_config1:27017 --bind_ip_all
     ports:
-      - "127.0.0.1:27018:27017"
+      - "127.0.0.1:27001:27017"
     volumes:
       - ./mongo_scripts:/scripts
     depends_on:

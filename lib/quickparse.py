@@ -94,6 +94,9 @@ class QuickParse():
 
         # deduplicate, just in case file is smaller than num_lines
         all_lines = list(set(head + tail))
+        if not all_lines:
+            raise QuickParseError('Error reading (or empty) file: {}'.format(self.file))
+
         self.input_delimiter = self._get_delimiter(all_lines)
         self._adaptive_print('[+] Detected delimiter: {}'.format(str(self.input_delimiter)))
 
