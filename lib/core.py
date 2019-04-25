@@ -224,7 +224,7 @@ class CredShed():
                                     if t is not None:
                                         completed += 1
                                         time_elapsed = datetime.now() - start_time
-                                        self._print('\n>> {:,} files completed in {} <<\n'.format(completed, str(time_elapsed).split('.')[0]))
+                                        self._print('\n>> {:,}/{:,} ({:.1f}%) files completed in {} <<\n'.format(completed, len(to_add), (completed/len(to_add)*100), str(time_elapsed).split('.')[0]))
 
                                     _t = threading.Thread(target=self._add_by_file, name=str(l[1]), args=(l,))
                                     pool[i] = _t
@@ -352,7 +352,7 @@ class CredShed():
 
         # initialize database
 
-        while not self.STOP and max_tries > 0:
+        while ( (not self.STOP) and (max_tries > 0) ):
 
             try:
 
@@ -406,6 +406,8 @@ class CredShed():
                     except AttributeError:
                         pass
                     comms_queue.put(error)
+                    self.STOP = True
+                    break
 
                 if not self.deduplication:
                     # override set with generator

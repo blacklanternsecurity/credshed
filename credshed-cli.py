@@ -4,7 +4,18 @@
 
 '''
 TODO:
+    - move mongodb server config into credshed.config
+        - add auth
+    - allow imports to primary / metadata servers independently
+        - try to connect to metadata server and if it doesn't respond, EYTONY NO PROBLEMMMM
     - when importing, prompt user for confirmation (with first / last 10 files and total count)
+    - performance benchmarks (4x 500GB Samsung SSDs in LVM RAID 0):
+        - 4 shards:
+            - >> 3,666 files completed in 4 days, 2:33:34 <<
+            - [+] Searched 1,021,786,928 accounts in 0:00:07.26 seconds]
+        - 10 shards:
+            - >> 4,549/29,551 (15.4%) files completed in 3 days, 7:17:19 <<
+            - [+] Searched 1,174,146,654 accounts in 0:00:00.07 seconds
 '''
 
 import sys
@@ -101,7 +112,7 @@ def main(options):
 
     except KeyboardInterrupt:
         cred_shed.STOP = True
-        errprint('[!] CredShed Interrupted\n')
+        errprint('\n[!] Stopping CredShed\n')
         return
 
     finally:
@@ -153,7 +164,7 @@ if __name__ == '__main__':
     except AssertionError as e:
         errprint('\n\n[!] {}'.format(str(e)))
 
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, BrokenPipeError):
         errprint('\n\n[!] Interrupted')
 
     finally:
