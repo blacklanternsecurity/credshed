@@ -4,15 +4,15 @@
 
 '''
 TODO:
-    - move mongodb server config into credshed.config
-        - add auth
+    - logging
+    - mongodb auth
     - allow imports to primary / metadata servers independently
-        - try to connect to metadata server and if it doesn't respond, EYTONY NO PROBLEMMMM
+        - try to connect to metadata server and if it doesn't respond, EYTONY NO PROOOBLEMMMM
     - when importing, prompt user for confirmation (with first / last 10 files and total count)
     - performance benchmarks (4x 500GB Samsung SSDs in LVM RAID 0):
         - 4 shards:
             - >> 3,666 files completed in 4 days, 2:33:34 <<
-            - [+] Searched 1,021,786,928 accounts in 0:00:07.26 seconds]
+            - [+] Searched 1,021,786,928 accounts in 0:00:00.06 seconds
         - 10 shards:
             - >> 4,549/29,551 (15.4%) files completed in 3 days, 7:17:19 <<
             - [+] Searched 1,174,146,654 accounts in 0:00:00.07 seconds
@@ -20,8 +20,7 @@ TODO:
 
 import sys
 import argparse
-from lib.core import *
-from lib.errors import *
+from credshed import *
 from pathlib import Path
 from datetime import datetime
 from multiprocessing import cpu_count
@@ -30,7 +29,7 @@ from multiprocessing import cpu_count
 
 class CredShedCLI(CredShed):
 
-    def __init__(self, output='__db__', unattended=False, deduplication=False, threads=2):
+    def __init__(self, output='__db__', unattended=False, metadata=True, deduplication=False, threads=2):
 
         # if we're outputting to a file instead of the DB
         if not str(output) == '__db__':
@@ -41,7 +40,11 @@ class CredShedCLI(CredShed):
                 errprint('[!] Overwriting {} - CTRL+C to cancel'.format(self.output))
                 sleep(5)
 
-        super().__init__(unattended=unattended, deduplication=deduplication, threads=threads)
+        super().__init__(unattended=unattended, metadata=metadata, deduplication=deduplication, threads=threads)
+
+        if not self.db.use_metadata:
+            errprint('[*] Continuing without metadata support')
+            self.metadata=False
 
 
     def _search(self, query, query_type):
@@ -69,7 +72,9 @@ class CredShedCLI(CredShed):
 def main(options):
 
     try:
-        cred_shed = CredShedCLI(output=options.out, unattended=options.unattended, deduplication=options.deduplication, threads=options.threads)
+        cred_shed = CredShedCLI(output=options.out, unattended=options.unattended, \
+            metadata=(not options.no_metadata), deduplication=options.deduplication, \
+            threads=options.threads)
     except CredShedError as e:
         errprint('[!] {}\n'.format(str(e)))
         sys.exit(1)
@@ -112,7 +117,7 @@ def main(options):
 
     except KeyboardInterrupt:
         cred_shed.STOP = True
-        errprint('\n[!] Stopping CredShed\n')
+        errprint('\n[!] Stopping CLI\n')
         return
 
     finally:
@@ -140,6 +145,7 @@ if __name__ == '__main__':
     parser.add_argument('-m', '--search-description',   action='store_true',            help='search by description / misc')
     parser.add_argument('--threads',        type=int,   default=default_threads,        help='number of threads for import operations')
     parser.add_argument('-u', '--unattended',           action='store_true',            help='auto-detect import fields without user interaction')
+    parser.add_argument('--no-metadata',                action='store_true',            help='disable metadata database')
 
     try:
 

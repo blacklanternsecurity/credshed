@@ -6,16 +6,11 @@ import re
 import sys
 import base64
 import hashlib
-from lib.util import *
-from lib.errors import *
+from .util import *
+from .errors import *
 from pathlib import Path
 from datetime import datetime
 
-
-def errprint(*s, end='\n'):
-
-    sys.stderr.write(''.join([str(i) for i in s]) + end)
-    sys.stderr.flush()
 
 
 class Account():
@@ -192,11 +187,9 @@ class Account():
     def _if_key_exists(d, k):
 
         try:
-            return d[k].encode(encoding='utf-8')
+            return encode(d[k])
         except KeyError:
             return b''
-        except UnicodeEncodeError:
-            return str(d[k])[2:-1]
 
 
     @property
@@ -206,13 +199,20 @@ class Account():
 
 
     def to_object_id(self):
+        '''
+        hacky compound domain-->email index
+        first 6 bytes of _id after the domain are a hash of the email
+        '''
 
-        account_hash = decode(base64.b64encode(hashlib.sha256(self.bytes).digest()[:12]))
-
-        domain_chunk = ''
         if self.email:
             # _id begins with reversed domain
-            domain_chunk = decode(self.split_email[1][::-1])
+            email, domain = self.split_email
+            domain_chunk = decode(domain[::-1])
+            email_hash = decode(base64.b64encode(hashlib.sha256(email).digest()[:6]))
+            account_hash = email_hash + decode(base64.b64encode(hashlib.sha256(self.bytes).digest()[:6]))
+        else:
+            account_hash = decode(base64.b64encode(hashlib.sha256(self.bytes).digest()[:12]))
+            domain_chunk = ''
 
         return '|'.join([domain_chunk, account_hash])
 

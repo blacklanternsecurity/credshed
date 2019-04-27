@@ -2,83 +2,6 @@
 
 # by TheTechromancer
 
-# TODO:
-# fix ObjectID so that _id == (domain.com) + (hash(entire account including domain))
-#  - because asdf@domain.com has the same id as asdf@other.domain.com
-'''
-    $ pstree | grep pyth                                                                                                                                                     
-            |-python3.7---2*[{python3.7}]                                                                                                                                                         
-                           |      |-python3.7-+-2*[head]                                                                                                                                          
-                           |      |           |-17*[python3.7---6*[{python3.7}]]                                                                                                                  
-                           |      |           |-5*[python3.7---7*[{python3.7}]]
-                           |      |           `-284*[{python3.7}]
-    $ pstree | grep pyth
-            |-python3.7---2*[{python3.7}]                                       
-                           |      |-python3.7-+-16*[python3.7---6*[{python3.7}]]
-                           |      |           |-8*[python3.7---7*[{python3.7}]]
-                           |      |           `-385*[{python3.7}]
-    $ pstree | grep pyth
-            |-python3.7---2*[{python3.7}]
-                           |      |-python3.7-+-21*[python3.7---6*[{python3.7}]]
-                           |      |           |-3*[python3.7---7*[{python3.7}]]
-                           |      |           `-427*[{python3.7}]
-    $ pstree | grep pyth
-            |-python3.7---2*[{python3.7}]
-                           |      `-python3.7-+-16*[python3.7---5*[{python3.7}]]
-                           |                  |-6*[python3.7---7*[{python3.7}]]
-                           |                  |-2*[python3.7]
-                           |                  `-6508*[{python3.7}]
-
-
-
-============================================================                                                                                                                                                       
- /mnt/n0/leak/cleaning/bigDB/Shopping Collection/22.txt                                                                                                                                                            
-============================================================                                                                                                                                                       
-Source name:         bigDB/Shopping Collection/22.txt                                                                                                                                                              
-Source hashtype:                                                                                                                                                                                                   
-Source description:  Unattended import at 2019-03-15T20:07:22.724                                                                                                                                                  
-[+] Finished adding /mnt/n0/leak/cleaning/bigDB/Shopping Collection/22.txt                                                                                                                                         
-                                                                                                                                                                                                                   
->> 3,628 FILES COMPLETED <<                                                                                                                                                                                        
-                                                                                                                                                                                                                   
-============================================================                                                                                                                                                       
- /mnt/n0/leak/cleaning/bigDB/Database Collection/XLSX Base Collection/База Kupivip.ru - 4 200 000 контактов/База Kupivip.ru - 4 200 000 контактов/купивип3_433426 адресов.xlsx                                     
-============================================================                                                                                                                                                       
-Source name:         bigDB/Database Collection/XLSX Base Collection/База Kupivip.ru - 4 200 000 контактов/База Kupivip.ru - 4 200 000 контактов/купивип3_433426 адресов.xlsx                                       
-Source hashtype:                                                                                                                                                                                                   
-Source description:  Unattended import at 2019-03-15T20:07:22.742                                                                                                                                                  
-[+] Finished adding /mnt/n0/leak/cleaning/bigDB/Database Collection/XLSX Base Collection/База Kupivip.ru - 4 200 000 контактов/База Kupivip.ru - 4 200 000 контактов/купивип3_433426 адресов.xlsx                  
-                                                                                                                                                                                                                   
->> 3,629 FILES COMPLETED <<                                                                                                                                                                                        
-                                                                                                                                                                                                                   
-============================================================                                                                                                                                                       
- /mnt/n0/leak/cleaning/bigDB/Database Collection/XLSX Base Collection/10 млн e-mail адресов клиентов интернет магазинов/Wildberries/Ростовская обл..xlsx                                                           
-============================================================                                                                                                                                                       
-Source name:         bigDB/Database Collection/XLSX Base Collection/10 млн e-mail адресов клиентов интернет магазинов/Wildberries/Ростовская обл..xlsx                                                             
-Source hashtype:
-Source description:  Unattended import at 2019-03-15T20:07:22.759
-[+] Finished adding /mnt/n0/leak/cleaning/bigDB/Database Collection/XLSX Base Collection/10 млн e-mail адресов клиентов интернет магазинов/Wildberries/Ростовская обл..xlsx
-
->> 3,630 FILES COMPLETED <<
-
-============================================================
- /mnt/n0/leak/cleaning/bigDB/UPDATES/#1 November 4th 2018/checkyou/NextGenUpdate.com/Расшифровка NextGenUpdate.com [612k].txt
-============================================================
-Source name:         bigDB/UPDATES/#1 November 4th 2018/checkyou/NextGenUpdate.com/Расшифровка NextGenUpdate.com [612k].txt
-Source hashtype:
-Source description:  Unattended import at 2019-03-15T20:07:22.775
-[+] Finished adding /mnt/n0/leak/cleaning/bigDB/UPDATES/#1 November 4th 2018/checkyou/NextGenUpdate.com/Расшифровка NextGenUpdate.com [612k].txt
-
->> 3,631 FILES COMPLETED <<
-
-============================================================
- /mnt/n0/leak/cleaning/bigDB/UPDATES/#1 November 4th 2018/Update Dumps/nattyfree.com {3.715} [HASH+NOHASH] (Shopping Clothing)/NotFound.txt
-============================================================
-Source name:         bigDB/UPDATES/#1 November 4th 2018/Update Dumps/nattyfree.com {3.715} [HASH+NOHASH] (Shopping Clothing)/NotFound.txt
-Source hashtype:
-Source description:  Unattended import at 2019-03-15T20:27:05.939
-'''
-
 import os
 import queue
 import random
@@ -122,12 +45,14 @@ def number_range(s):
 
 class CredShed():
 
-    def __init__(self, output='__db__', unattended=False, deduplication=False, threads=2):
+    def __init__(self, output='__db__', unattended=False, metadata=True, deduplication=False, threads=2):
+
+        self.metadata = metadata
 
         try:
-            self.db = DB()
+            self.db = DB(use_metadata=metadata)
         except ServerSelectionTimeoutError as e:
-            raise CredShedTimeout('Connection to database timed out: {}'.format(str(e)))
+            raise CredShedTimeoutError('Connection to database timed out: {}'.format(str(e)))
 
         self.threads = threads
         self.output = Path(output)
@@ -268,8 +193,19 @@ class CredShed():
             '''
 
         else:
+            self._print('[+] {:,} files detected, importing uwing {} threads'.format(len(to_add), self.threads))
+
             for l in to_add:
+                completed = 0
+                start_time = datetime.now()
+
+                file, _dir = l
+                self._print('[+] Importing {}'.format(file))
+    
                 self._add_by_file(l)
+
+                time_elapsed = datetime.now() - start_time
+                self._print('\n>> {:,}/{:,} ({:.1f}%) files completed in {} <<\n'.format(completed, len(to_add), (completed/len(to_add)*100), str(time_elapsed).split('.')[0]))
 
 
         if self.unattended and self.errors:
@@ -340,7 +276,6 @@ class CredShed():
 
 
 
-
     def _add_by_file(self, dir_and_file, max_tries=5):
         '''
         takes iterable of directories and files in the format:
@@ -356,7 +291,7 @@ class CredShed():
 
             try:
 
-                db = DB()
+                db = DB(use_metadata=self.metadata)
 
                 # if leak_file is None, assume leak_dir is just a standalone file
                 if dir_and_file[1] is None:
@@ -405,7 +340,7 @@ class CredShed():
                         error += str(e.details)
                     except AttributeError:
                         pass
-                    comms_queue.put(error)
+                    self.comms_queue.put(error)
                     self.STOP = True
                     break
 

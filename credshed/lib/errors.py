@@ -6,7 +6,13 @@
 class CredShedError(Exception):
     pass
 
-class CredShedTimeout(CredShedError):
+class CredShedConfigError(CredShedError):
+    pass
+
+class CredShedMetadataError(CredShedError):
+    pass
+
+class CredShedTimeoutError(CredShedError):
     pass
 
 class CredShedDatabaseError(CredShedError):

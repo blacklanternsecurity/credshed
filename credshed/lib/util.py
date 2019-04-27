@@ -2,6 +2,7 @@
 
 # by TheTechromancer
 
+import sys
 
 def clean_encoding(s):
 
@@ -26,3 +27,9 @@ def decode(b):
         return b.decode(encoding='utf-8')
     except UnicodeDecodeError:
         return str(b)[2:-1]
+
+
+def errprint(*s, end='\n'):
+
+    sys.stderr.write(' '.join([str(i) for i in s]) + end)
+    sys.stderr.flush()
