@@ -128,7 +128,8 @@ class CredShed():
 
             start_time = datetime.now()
 
-            file_threads = int(self.threads*1.5)
+            #file_threads = int(self.threads*1.5)
+            file_threads = int(self.threads)
             self.threads = 1
 
             pool = [None] * file_threads
@@ -149,7 +150,7 @@ class CredShed():
                                     if t is not None:
                                         completed += 1
                                         time_elapsed = datetime.now() - start_time
-                                        self._print('\n>> {:,}/{:,} ({:.1f}%) files completed in {} <<\n'.format(completed, len(to_add), (completed/len(to_add)*100), str(time_elapsed).split('.')[0]))
+                                        self._print('>> {:,}/{:,} ({:.1f}%) files completed in {} <<'.format(completed, len(to_add), (completed/len(to_add)*100), str(time_elapsed).split('.')[0]))
 
                                     _t = threading.Thread(target=self._add_by_file, name=str(l[1]), args=(l,))
                                     pool[i] = _t
@@ -162,12 +163,25 @@ class CredShed():
                         except AssertionError:
                             break
 
+                self._print('[+] Reached end, waiting for active threads to finish:')
                 for t in pool:
-                    if t is not None:
-                        t.join()
-                        completed += 1
-                        time_elapsed = datetime.now() - start_time
-                        self._print('\n>> {:,} files completed in {} <<\n'.format(completed, str(time_elapsed).split('.')[0]))
+                    try:
+                        if t.is_active():
+                            print('\t' + str(t))
+                    except AttributeError:
+                        continue
+
+                while not all([t is None for t in pool]):
+                    for i in range(len(pool)):
+                        t = pool[i]
+                        if t is not None:
+                            if not t.is_alive():
+                                completed += 1
+                                time_elapsed = datetime.now() - start_time
+                                self._print('>> {:,}/{:,} ({:.1f}%) files completed in {} <<'.format(completed, len(to_add), (completed/len(to_add)*100), str(time_elapsed).split('.')[0]))
+                                pool[i] = None
+                                continue
+                    sleep(.1)
 
             except KeyboardInterrupt:
                 self.STOP = True
@@ -205,12 +219,13 @@ class CredShed():
                 self._add_by_file(l)
 
                 time_elapsed = datetime.now() - start_time
-                self._print('\n>> {:,}/{:,} ({:.1f}%) files completed in {} <<\n'.format(completed, len(to_add), (completed/len(to_add)*100), str(time_elapsed).split('.')[0]))
+                self._print('>> {:,}/{:,} ({:.1f}%) files completed in {} <<'.format(completed, len(to_add), (completed/len(to_add)*100), str(time_elapsed).split('.')[0]))
 
 
         if self.unattended and self.errors:
-            self._print('Errors encountered:\n\t', end='')
-            self._print('\n\t'.join(self.errors))
+            e = 'Errors encountered:\n\t'
+            e += '\n\t'.join(self.errors)
+            self._print(e)
 
 
 
@@ -383,6 +398,7 @@ class CredShed():
 
             except QuickParseError as e:
                 self.comms_queue.put('[!] {}'.format(str(e)))
+                break
 
             except CredShedDatabaseError as e:
                 self.comms_queue.put(str(e))
@@ -392,7 +408,7 @@ class CredShed():
             finally:
                 try:
                     db.close()
-                    self.comms_queue.put('[+] Finished adding {}'.format(leak_file))
+                    # self.comms_queue.put('[+] Finished adding {}'.format(leak_file))
                 except UnboundLocalError:
                     pass
 
@@ -403,7 +419,9 @@ class CredShed():
 
         while 1:
             try:
-                sys.stderr.write(self.comms_queue.get_nowait() + '\n')
+                comm = self.comms_queue.get_nowait()
+                if comm is not None:
+                    sys.stderr.write(str(comm) + '\n')
             except queue.Empty:
                 sleep(.1)
             except BrokenPipeError:

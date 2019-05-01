@@ -63,6 +63,7 @@ class DB():
                 # meta DB (account metadata including source information, counters, leak <--> account associations, etc.)
                 self.meta_client = pymongo.MongoClient(meta_server, meta_port)
                 self.meta_db = self.meta_client[meta_db]
+                self.meta_db.command('dbstats')
 
                 #try:
                 #    self.meta_db.create_collection('account_tags')
@@ -286,7 +287,6 @@ class DB():
                     sleep(.2)
 
                     # These poor threads have chronic suicidial depression
-                    # make sure they actually start instead of immediately hanging themselves
                     try:
                         comms_queue.get_nowait()
                         pool.append(p[0])
@@ -537,7 +537,6 @@ class DB():
 
         try:
             collstats = self.main_db.command('collstats', 'accounts', scale=1048576)
-            print(collstats)
             num_accounts_in_db = collstats['count']
         except KeyError:
             num_accounts_in_db = 0
@@ -577,7 +576,7 @@ class DB():
             pass
 
 
-    def _gen_batches(self, leak, source_id, batch_size=10000):
+    def _gen_batches(self, leak, source_id, batch_size=20000):
 
         batch = []
         for account in leak:

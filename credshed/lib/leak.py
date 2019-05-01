@@ -18,6 +18,7 @@ class Account():
     # cut down on memory usage by not using a dictionary
     __slots__ = ['email', 'username', 'password', 'misc']
 
+    valid_email_chars = b'abcdefghijklmnopqrstuvwxyz0123456789-_.+@'
     # for checking if string is an email
     email_regex = re.compile(r'^([a-zA-Z0-9_\-\.\+]+)@([a-zA-Z0-9_\-\.]+)\.([a-zA-Z]{2,8})$')
     # same thing but for raw bytes
@@ -45,8 +46,13 @@ class Account():
         #    if len(v) >= self.max_length_2:
         #        raise AccountCreationError('Hash or desc. too long: {}'.format(str(v)[2:-1][:64]))
 
+        self.email = b''
+        email = email.strip().lower()
+        for i in range(len(email)):
+            c = email[i:i+1]
+            if c in self.valid_email_chars:
+                self.email += c
         # remove whitespace, single-quotes, and backslashes
-        self.email = email.strip().lower().translate(None, b"'\\")
         self.username = username.strip().translate(None, b"'\\")
         self.misc = misc.strip()
 
@@ -57,12 +63,11 @@ class Account():
                 self.username = b''
 
         else:
-            if not self.email_regex_bytes.match(self.email):
+            if not self.is_email(self.email):
                 #errprint('[*] Invalid email: {}'.format(self.email))
                 if not self.username:
                     # errprint('\n[+] Changing to username')
-                    self.username = self.email                    
-                self.email = b''
+                    self.email, self.username = self.username, self.email
 
         if _hash and not password:
             self.password = _hash.strip()
@@ -72,7 +77,7 @@ class Account():
         # keeping an email by itself is sometimes useful
         # if not strictly for OSINT purposes, at least knowing which leaks it was a part of
         # allows searching for additional information in the raw dump
-        if not self.email or (self.username and (self.password or self.misc)):
+        if not (self.email or (self.username and (self.password or self.misc))):
             # print(email, username, password, _hash, misc)
             raise AccountCreationError('Not enough information to create account:\n{}'.format(str(self)[:64]))
 
@@ -153,7 +158,7 @@ class Account():
     def is_email(self, email):
 
         # abort if value is too long
-        if len(email) > 128:
+        if len(email) > self.max_length_1:
             return False
 
         try:

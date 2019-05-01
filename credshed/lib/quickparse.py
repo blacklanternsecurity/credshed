@@ -33,7 +33,7 @@ class QuickParse():
     yields Account() objects
     '''
 
-    def __init__(self, file, source_name=None, unattended=False, threshold=.85, strict=True):
+    def __init__(self, file, source_name=None, unattended=False, threshold=.80, strict=True):
 
         self.file = Path(file).resolve()
 
@@ -320,27 +320,32 @@ class QuickParse():
 
     def translate_line(self, line):
         '''
-        polite and picky function which takes a line and maps its fields exactly declared in self.mapping
+        polite and picky function which takes a line and maps its fields exactly as declared in self.mapping
         returns an Account() object
         '''
 
-        line_old = self._split_line(line)
-        #len_diff = len(line) - self.num_input_fields
-        line_new = [b''] * 5
+        try:
 
-        for p in self.mapping:
-            try:
-                #if len_diff and p == self.password_field:
-                #    # handle edge case where password contains delimiter character
-                #    line_new[self.mapping[p]] = self.input_delimiter.join(line_old[p:p+len_diff+1])
-                #else:
-                line_new[self.mapping[p]] = line_old[p]
-            except IndexError:
-                raise AccountCreationError('Index {} does not exist in {}'.format(p, str(line)[:64]))
+            line_old = self._split_line(line)
+            #len_diff = len(line) - self.num_input_fields
+            line_new = [b''] * 5
 
-        else:
+            for p in self.mapping:
+                try:
+                    #if len_diff and p == self.password_field:
+                    #    # handle edge case where password contains delimiter character
+                    #    line_new[self.mapping[p]] = self.input_delimiter.join(line_old[p:p+len_diff+1])
+                    #else:
+                    line_new[self.mapping[p]] = line_old[p]
+                except IndexError:
+                    raise AccountCreationError('Index {} does not exist in {}'.format(p, str(line)[:64]))
+
+
             email, username, password, _hash, misc = line_new
             return Account(email, username, password, _hash, misc)
+
+        except AccountCreationError:
+            return self.absorb_line(line)
 
 
 
@@ -351,19 +356,19 @@ class QuickParse():
         returns an Account() object
         '''
 
-        if len(line) < 1024:
+        line = line[:1024]
 
-            email_match = Account.email_regex_search_bytes.search(line)
+        email_match = Account.email_regex_search_bytes.search(line)
 
-            if email_match:
-                email = line[email_match.start():email_match.end()]
-                # strip out email and replace with "@"
-                line = line.replace(email, b'@')
-                if len(line) > 2:
-                    # only use the last 511 characters
-                    return Account(email=email, misc=line[-511:])
-                else:
-                    raise AccountCreationError('Not enough content in line: {}'.format(str(line)[:64]))
+        if email_match:
+            email = line[email_match.start():email_match.end()]
+            # strip out email and replace with "@"
+            line = line.replace(email, b'@')
+            if len(line) > 2:
+                # only use the last 511 characters
+                return Account(email=email, misc=line[-511:])
+            else:
+                raise AccountCreationError('Not enough content in line: {}'.format(str(line)[:64]))
 
         raise AccountCreationError('No valid email in line: {}'.format(str(line)[:64]))
 
@@ -560,7 +565,7 @@ class QuickParse():
                         else:
                             yield self.absorb_line(line)
                     except AccountCreationError as e:
-                        self._adaptive_print('[!] {}: {}'.format(str(e), str(line)[:64]))
+                        self._adaptive_print('[!] {}'.format(str(e)))
                         continue
         except PermissionError:
             raise QuickParseError('Permission denied on {}'.format(str(self.file)))
