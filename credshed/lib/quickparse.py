@@ -7,9 +7,9 @@ import string
 from .db import *
 from .leak import *
 from time import sleep
+import subprocess as sp
 from pathlib import Path
 from datetime import datetime
-from subprocess import run, PIPE
 from statistics import mode, StatisticsError
 
 
@@ -32,6 +32,8 @@ class QuickParse():
     takes a filename
     yields Account() objects
     '''
+
+    max_line_length = 1024
 
     def __init__(self, file, source_name=None, unattended=False, threshold=.80, strict=True):
 
@@ -89,8 +91,11 @@ class QuickParse():
         if not self.file.is_file():
             raise QuickParseError('Failure reading {}'.format(str(self.file)))
 
-        head = [x for x in run(['head', '-n', str(int(num_lines/2)), str(self.file)], stdout=PIPE).stdout.splitlines() if x]
-        tail = [x for x in run(['tail', '-n', str(int(num_lines/2)), str(self.file)], stdout=PIPE).stdout.splitlines() if x]
+        #head = [x for x in run(['head', '-n', str(int(num_lines/2)), str(self.file)], stdout=PIPE).stdout.splitlines() if x]
+        #tail = [x for x in run(['tail', '-n', str(int(num_lines/2)), str(self.file)], stdout=PIPE).stdout.splitlines() if x]
+
+        head = self._head(str(self.file), num_lines=int(num_lines/2))
+        tail = self._tail(str(self.file), num_lines=int(num_lines/2))
 
         # deduplicate, just in case file is smaller than num_lines
         all_lines = list(set(head + tail))
@@ -144,30 +149,33 @@ class QuickParse():
         # if there are unknown fields, try and figure the rest out
         if unknown_fields:
 
-            # if 
+            # if there's only one unknown field
             if len(unknown_fields) == 1:
-                # if we've already found hashes
-                if any([x in self.mapping.values() for x in [self.fields['h']]]):
-                    # assume usernames
-                    self._adaptive_print('[+] Assuming usernames in column #{}'.format(unknown_fields[0]+1))
-                    self.mapping[unknown_fields[0]] = self.fields['u']
-                    unknown_fields = []
-
-                # otherwise, assume passwords
-                else:
+            
+                # assume passwords if we already have username or email
+                if any([x in self.mapping.values() for x in [self.fields['e'], self.fields['u']]]):
                     self._adaptive_print('[+] Assuming passwords in column #{}'.format(unknown_fields[0]+1))
                     self.password_field = unknown_fields[0]
                     self.mapping[unknown_fields[0]] = self.fields['p']
                     unknown_fields = []
 
-            # if we haven't mapped email or usernames yet, and there's two unknown fields
-            elif len(unknown_fields) == 2 and not any([x in self.mapping.values() for x in [self.fields['e'], self.fields['u']]]):
-                self.password_field = unknown_fields[1]
-                self._adaptive_print('[+] Assuming usernames in column #{}'.format(unknown_fields[0]+1))
-                self.mapping[unknown_fields[0]] = self.fields['u']
-                self._adaptive_print('[+] Assuming passwords in column #{}'.format(unknown_fields[1]+1))
-                self.mapping[unknown_fields[1]] = self.fields['p']
-                unknown_fields = []
+                elif not self.unattended:
+                    # assume usernames if we already have hashes or passwords
+                    if any([x in self.mapping.values() for x in [self.fields['h'], self.fields['p']]]):
+                        self._adaptive_print('[+] Assuming usernames in column #{}'.format(unknown_fields[0]+1))
+                        self.mapping[unknown_fields[0]] = self.fields['u']
+                        unknown_fields = []
+
+            elif not self.unattended:
+                # if we haven't mapped email or usernames yet, and there's two unknown fields
+                if len(unknown_fields) == 2 and not any([x in self.mapping.values() for x in [self.fields['e'], self.fields['u']]]):
+                    self.password_field = unknown_fields[1]
+                    self._adaptive_print('[+] Assuming usernames in column #{}'.format(unknown_fields[0]+1))
+                    self.mapping[unknown_fields[0]] = self.fields['u']
+                    self._adaptive_print('[+] Assuming passwords in column #{}'.format(unknown_fields[1]+1))
+                    self.mapping[unknown_fields[1]] = self.fields['p']
+                    unknown_fields = []
+
 
             if self.unattended and unknown_fields:
                 # die alone, in the dark
@@ -206,6 +214,7 @@ class QuickParse():
 
                 if self.unattended:
                     raise FieldDetectionError('Unknown column in {}'.format(self.file))
+
                 # otherwise, ask user
                 self._adaptive_print('=' * 60)
                 self._adaptive_print('[?] Which column is this?')
@@ -356,7 +365,7 @@ class QuickParse():
         returns an Account() object
         '''
 
-        line = line[:1024]
+        line = line[:self.max_line_length]
 
         email_match = Account.email_regex_search_bytes.search(line)
 
@@ -370,7 +379,7 @@ class QuickParse():
             else:
                 raise AccountCreationError('Not enough content in line: {}'.format(str(line)[:64]))
 
-        raise AccountCreationError('No valid email in line: {}'.format(str(line)[:64]))
+        raise AccountCreationError('Unable to parse line: {}'.format(str(line)[:64]))
 
 
 
@@ -441,7 +450,7 @@ class QuickParse():
             # make sure most lines fit the detected format
             valid_lines = score / len(lines)
             if valid_lines < self.threshold:
-                raise DelimiterError('Delimiter "{}"" ({:.1f}%) failed threshold ({:.2f}%) in "{}"'.format(\
+                raise DelimiterError('Delimiter "{}" ({:.1f}%) failed threshold ({:.1f}%) in "{}"'.format(\
                     str(d0[0])[2:-1], (valid_lines*100), self.threshold*100, self.file))
 
         return best_delimiter
@@ -513,19 +522,9 @@ class QuickParse():
 
             # detect emails
             num_emails = [Account.is_fuzzy_email(field) for field in column].count(True)
-            if num_emails > int(.75 * len(lines)) and not self.fields['e'] in self.mapping.values():
+            if (num_emails / len(lines) > self.threshold) and not self.fields['e'] in self.mapping.values():
                 self._adaptive_print('[+] Detected emails in column #{}'.format(i+1))
                 self.mapping[i] = self.fields['e']
-
-            # detect hashes
-            # all non-blank fields in column must be the same length
-            # and be at least 12 characters in length
-            # and contain only hex characters
-            elif random_field_length >= 12 and \
-                [len(field) == random_field_length for field in column_no_blanks].count(True)/len(column_no_blanks) > self.threshold and \
-                [all([char.lower() in 'abcdef0123456789' for char in field]) for field in column_no_blanks].count(True)/len(column_no_blanks) > self.threshold:
-                    self._adaptive_print('[+] Detected hashes in column #{}'.format(i+1))
-                    self.mapping[i] = self.fields['h']
 
             else:
                 # skip columns containing numeric values like UIDs, dates, IP addresses, SSNs, etc.
@@ -534,6 +533,17 @@ class QuickParse():
                 if ( [all([char in string.digits for char in field]) for field in column].count(True)/len(lines) > self.threshold ) and \
                 not ([field.upper() == 'NULL' for field in column].count(True)/len(lines) > self.threshold ):
                     self._adaptive_print('[+] Skipping numeric field')
+
+                # detect hashes
+                # all non-blank fields in column must be the same length
+                # and be at least 12 characters in length
+                # and contain only hex characters
+                elif random_field_length >= 12 and \
+                    [len(field) == random_field_length for field in column_no_blanks].count(True)/len(column_no_blanks) > self.threshold and \
+                    [all([char.lower() in 'abcdef0123456789' for char in field]) for field in column_no_blanks].count(True)/len(column_no_blanks) > self.threshold:
+                        self._adaptive_print('[+] Detected hashes in column #{}'.format(i+1))
+                        self.mapping[i] = self.fields['h']
+
                 else:
                     unknown_fields.append(i)
 
@@ -553,12 +563,41 @@ class QuickParse():
 
 
 
+    def _head(self, filename, num_lines=10):
+
+        lines = []
+
+        try:
+            for line in open(filename, mode='rb'):
+                lines.append(line.strip(b'\r\n')[0:self.max_line_length])
+                num_lines -= 1
+                if num_lines <= 0:
+                    break
+
+        except OSError:
+            pass
+
+        finally:
+            return lines
+
+
+    def _tail(self, filename, num_lines=10, timeout=2):
+
+        try:
+            lines = sp.run(['tail', '-n', str(num_lines), str(self.file)], stdout=sp.PIPE, timeout=timeout).stdout.splitlines()
+        except sp.TimeoutExpired:
+            lines = []
+
+        return [line[0:self.max_line_length] for line in lines]
+
+
     def __iter__(self):
 
         #assert self.info_gathered, 'Run .gather_info() first'
         try:
             with open(str(self.file), 'rb') as f:
                 for line in f:
+                    line = line[0:self.max_line_length].strip(b'\r\n')
                     try:
                         if self.strict:
                             yield self.translate_line(line)

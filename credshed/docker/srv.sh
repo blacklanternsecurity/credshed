@@ -11,7 +11,7 @@ Usage: ${0##*/} [option]
 
   Options:
 
-    [1] prep    create init scripts & directories
+    [1] prep    create docker-compose.yml & init scripts
     [2] start   start containers
     [3] init    initialize mongodb shards
         stop    stop dockerd
@@ -345,7 +345,8 @@ build_mongo_db_scripts()
 use credshed
 db.createCollection("accounts")
 sh.enableSharding("credshed")
-sh.shardCollection("credshed.accounts", {_id: 1})' | sudo tee "${mongo_script_dir}/init-main_db.js"
+sh.shardCollection("credshed.accounts", {_id: 1})
+db.accounts.insert({"_id" : "moc.elpmaxe|n4bQgYhMCbZLR53W", "email" : "test", "password" : "Password1" })' | sudo tee "${mongo_script_dir}/init-main_db.js"
 
 
     echo '
@@ -455,10 +456,13 @@ fi
 while :
 do
     case $1 in
-        -p|-P|--prep|prep)
+        -p|-P|--prep|prep|1)
             do_db_prep=true
             ;;
-        -i|-I|--init|init)
+        --start|start|2)
+            do_start=true
+            ;;
+        -i|-I|--init|init|3)
             do_init_db=true
             ;;
         -c|-C|--clean|clean)
@@ -467,20 +471,21 @@ do
         -d|-D|--delete|--del|delete)
             do_delete=true
             ;;
-        --start|start)
-            do_start=true
-            ;;
         --stop|stop|-k|-K|--kill|kill)
             do_stop=true
             ;;
         --purge|purge)
             do_purge=true
             ;;
-        --shards)
+        --shards|-n|--num-shards)
             shift
             case $1 in
-                ''|*[!0-9]*) echo "Invalid number of shards" ;;
-                *) num_shards=$1 ;;
+                ''|*[!0-9]*)
+                    echo "[!] Invalid number of shards" 
+                    exit 2
+                    ;;
+                *) num_shards=$1
+                    ;;
             esac
             ;;
         -h|--help|help)

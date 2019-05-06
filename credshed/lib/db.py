@@ -6,6 +6,7 @@ import copy
 import time
 import queue
 import pymongo
+import traceback
 import configparser
 from .leak import *
 from .util import *
@@ -255,6 +256,7 @@ class DB():
         '''
 
         pool = []
+        import_result = []
 
         #errprint('[+] Adding leak')
         #errprint('[+] Using {} threads'.format(num_threads))
@@ -267,7 +269,7 @@ class DB():
         start_time = time.time()
         batch_queue = multiprocessing.Queue(num_threads*10)
         result_queue = multiprocessing.Queue(num_threads*10)
-        comms_queue = multiprocessing.Queue(num_threads*10)
+        comms_queues = [multiprocessing.Queue(num_threads*10)] * num_threads
 
         try:
 
@@ -276,6 +278,7 @@ class DB():
             # in my experience, there's no such thing as luck
             p = [None]
             for thread_id in range(num_threads):
+                comms_queue = comms_queues[thread_id]
                 while 1:
                     p[0] = multiprocessing.Process(target=self._add_batches, args=(batch_queue, result_queue, comms_queue, source_id), daemon=True)
                     sleep(.1)
@@ -284,9 +287,10 @@ class DB():
                     except AttributeError:
                         # AttributeError: 'NoneType' object has no attribute 'poll'
                         continue
+
                     sleep(.2)
 
-                    # These poor threads have chronic suicidial depression
+                    # Restart thread if startup signal isn't received
                     try:
                         comms_queue.get_nowait()
                         pool.append(p[0])
@@ -295,11 +299,23 @@ class DB():
                         break
                     except queue.Empty:
                         #errprint('[+] Thread {} failed to start, terminating'.format(thread_id))
-                        p[0].terminate()
-                        sleep(.1)
-                        p.clear()
-                        p = [None]
-                        continue
+
+                        tries = 10
+                        while tries > 0:
+                            tries -= 1
+                            try:
+                                p[0].terminate()
+                                sleep(.1)
+                                p[0].kill()
+                                sleep(.1)
+                                p[0].close()
+                                p.clear()
+                                p = [None]
+                            except ValueError:
+                                # ValueError "Cannot close a process while it is still running."
+                                sleep(.1)
+                                continue
+                            break
 
 
             # stuff it down the pipes
@@ -307,7 +323,7 @@ class DB():
                 batch_queue.put(batch)
 
             # send shutdown signal to threads
-            for _ in range(num_threads):
+            for _ in range(num_threads+5):
                 batch_queue.put(None)
 
             # retrieve counters from finished processes
@@ -329,27 +345,34 @@ class DB():
                     sleep(1)
                     continue
 
-            # retrieve any errors:
-            errors = []
+            # empty contents of batch_queue
             while 1:
                 try:
-                    errors.append(comms_queue.get_nowait())
+                    batch_queue.get_nowait()
                 except queue.Empty:
                     break
+
+            # retrieve any errors:
+            errors = []
+            for comms_queue in comms_queues:
+                while 1:
+                    try:
+                        error = comms_queue.get_nowait()
+                        if error is not True:
+                            errors.append(error)
+                    except queue.Empty:
+                        break
 
             end_time = time.time()
             time_elapsed = (end_time - start_time)
 
-            import_result = ''
             if self.leak_overall > 0:
-                import_result += '[+] Import results for "{}"\n'.format(leak.source.name)
-                import_result += '[+]    total accounts: {:,}\n'.format(self.leak_overall)
-                import_result += '[+]    unique accounts: {:,} ({:.1f}%)\n'.format(self.leak_unique, ((self.leak_unique/self.leak_overall)*100))
-                import_result += '[+]    time elapsed: {} hours, {} minutes, {} seconds\n'.format(int(time_elapsed/3600), int((time_elapsed%3600)/60), int((time_elapsed%3600)%60))
+                import_result.append('[+] Import results for "{}"'.format(leak.source.name))
+                import_result.append('[+]    total accounts: {:,}'.format(self.leak_overall))
+                import_result.append('[+]    unique accounts: {:,} ({:.1f}%)'.format(self.leak_unique, ((self.leak_unique/self.leak_overall)*100)))
+                import_result.append('[+]    time elapsed: {} hours, {} minutes, {} seconds'.format(int(time_elapsed/3600), int((time_elapsed%3600)/60), int((time_elapsed%3600)%60)))
             if errors:
-                import_result += '[!] Errors:\n       {}'.format('\n       '.join(errors))
-
-            return import_result
+                import_result.append('[!] Errors:\n       {}'.format('\n       '.join([str(e) for e in errors])))
 
         except pymongo.errors.PyMongoError as e:
             error = str(e)
@@ -357,7 +380,13 @@ class DB():
                 error += (str(e.details))
             except AttributeError:
                 pass
-            comms_queue.put(CredShedDatabaseError(error))
+            import_result.append(error)
+
+        except QuickParseError as e:
+            import_result.append('[!] {}'.format(str(e)))
+
+        except Exception as e:
+            import_result.append(str(traceback.format_exc()))
 
         finally:
             # reset leak counters
@@ -366,7 +395,9 @@ class DB():
             self.leak_size = 0
             # let the bodies hit the floor
             for p in pool:
-                while 1:
+                tries = 10
+                while tries > 0:
+                    tries -= 1
                     try:
                         p.terminate()
                         sleep(.1)
@@ -378,6 +409,8 @@ class DB():
                         sleep(.1)
                         continue
                     break
+
+            return '\n'.join([r.strip() for r in import_result if r])
 
 
     def remove_leak(self, source_id, batch_size=10000):

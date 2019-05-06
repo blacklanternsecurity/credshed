@@ -9,6 +9,7 @@ import threading
 from .db import DB
 from .leak import *
 from .errors import *
+from math import sqrt
 from time import sleep
 from .quickparse import *
 from datetime import datetime
@@ -128,35 +129,40 @@ class CredShed():
 
             start_time = datetime.now()
 
-            #file_threads = int(self.threads*1.5)
-            file_threads = int(self.threads)
-            self.threads = 1
+            file_threads = max(1, int(self.threads / 2))
+            self.threads = 2
 
             pool = [None] * file_threads
-            self._print('[+] {:,} files detected, adding in parallel ({} threads, 1 process per file)'.format(len(to_add), file_threads))
+            self._print('[+] {:,} files detected, adding in parallel ({} thread(s), {} process(es) per file)'.format(len(to_add), file_threads, self.threads))
 
             try:
                 completed = 0
                 for l in to_add:
+
+                    if self.STOP:
+                        break
+
                     while not self.STOP:
                         try:
                             for i in range(len(pool)):
 
-                                if self.STOP:
-                                    break
-
                                 t = pool[i]
-                                if t is None or not t.is_alive():
-                                    if t is not None:
+
+                                try:
+                                    if t.is_alive():
+                                        continue
+                                    else:
                                         completed += 1
                                         time_elapsed = datetime.now() - start_time
                                         self._print('>> {:,}/{:,} ({:.1f}%) files completed in {} <<'.format(completed, len(to_add), (completed/len(to_add)*100), str(time_elapsed).split('.')[0]))
 
-                                    _t = threading.Thread(target=self._add_by_file, name=str(l[1]), args=(l,))
-                                    pool[i] = _t
-                                    _t.start()
-                                    # break out of infinite loop
-                                    assert False
+                                except AttributeError:
+                                    pass
+                                    
+                                pool[i] = threading.Thread(target=self._add_by_file, name=str(l[1]), args=(l,))
+                                pool[i].start()
+                                # break out of infinite loop
+                                assert False
 
                             sleep(.1)
 
@@ -166,7 +172,7 @@ class CredShed():
                 self._print('[+] Reached end, waiting for active threads to finish:')
                 for t in pool:
                     try:
-                        if t.is_active():
+                        if t.is_alive():
                             print('\t' + str(t))
                     except AttributeError:
                         continue
@@ -207,7 +213,7 @@ class CredShed():
             '''
 
         else:
-            self._print('[+] {:,} files detected, importing uwing {} threads'.format(len(to_add), self.threads))
+            self._print('[+] {:,} files detected, importing using {} threads'.format(len(to_add), self.threads))
 
             for l in to_add:
                 completed = 0
@@ -355,7 +361,8 @@ class CredShed():
                         error += str(e.details)
                     except AttributeError:
                         pass
-                    self.comms_queue.put(error)
+                    if error:
+                        self.comms_queue.put(error)
                     self.STOP = True
                     break
 
@@ -384,7 +391,9 @@ class CredShed():
                     #print('\nAdding:\n{}'.format(str(leak)))
                     #file_thread_executor.submit(db.add_leak, leak, num_threads=options.threads)
                     #self._print('[{}] Calling db.add_leak()'.format(dir_and_file))
-                    self.comms_queue.put(db.add_leak(leak, num_threads=self.threads))
+                    import_result = db.add_leak(leak, num_threads=self.threads)
+                    if import_result:
+                        self.comms_queue.put(import_result)
                     #self._print('[{}] Finished calling db.add_leak()'.format(dir_and_file))
 
                 else:
@@ -420,7 +429,7 @@ class CredShed():
         while 1:
             try:
                 comm = self.comms_queue.get_nowait()
-                if comm is not None:
+                if comm:
                     sys.stderr.write(str(comm) + '\n')
             except queue.Empty:
                 sleep(.1)
