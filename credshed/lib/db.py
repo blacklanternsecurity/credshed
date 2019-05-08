@@ -139,7 +139,7 @@ class DB():
                     email, domain = keyword.lower().split('@')[:2]
                     domain_chunk = re.escape(domain[::-1])
                     email_hash = decode(base64.b64encode(hashlib.sha256(encode(email)).digest()[:6]))
-                    query_str = domain_chunk + '|' +  email_hash
+                    query_str = domain_chunk + '\\|' +  email_hash
 
                     query_regex = r'^{}.*'.format(query_str)
                     query = {'_id': {'$regex': query_regex}}
@@ -149,11 +149,14 @@ class DB():
                     #results['emails'] = self.accounts.find({'email': email})
 
                 except ValueError:
+                    raise CredShedError('Invalid email')
                     # assume email without domain
+                    '''
                     email = r'^{}$'.format(keyword.lower())
                     query = {'email': {'$regex': email}}
                     errprint(query)
                     results['emails'] = self.accounts.find(query).limit(max_results)
+                    '''
 
 
             elif query_type == 'domain':
@@ -253,6 +256,12 @@ class DB():
                 [+] Unique Accounts: 1,093,289,423 (40.9%)
                 [+] Time Elapsed: 66 hours, 17 minutes, 16 seconds
                 (675,470 per minute)
+
+            50 threads on IBM, mongo primary only, 10 shards (5-7-2019)
+                [+] Import results for "bigDB/bigDB"
+                [+]    total accounts: 2,679,632,050
+                [+]    unique accounts: 832,557,894 (31.1%)
+                [+]    time elapsed: 51 hours, 27 minutes, 0 second
         '''
 
         pool = []
@@ -573,17 +582,33 @@ class DB():
             num_accounts_in_db = collstats['count']
         except KeyError:
             num_accounts_in_db = 0
+        except pymongo.PyMongoError as e:
+            error = str(e)
+            try:
+                error += (str(e.details))
+            except AttributeError:
+                pass
+            raise CredShedDatabaseError(error)
 
         return int(num_accounts_in_db)
 
 
     def get_source(self, _id):
 
-        s = self.sources.find_one({'_id': int(_id)})
         try:
-            return Source(s['name'], s['hashtype'], s['misc'])
-        except (TypeError, KeyError):
-            return None
+            s = self.sources.find_one({'_id': int(_id)})
+            try:
+                return Source(s['name'], s['hashtype'], s['misc'])
+            except (TypeError, KeyError):
+                return None
+
+        except pymongo.PyMongoError as e:
+            error = str(e)
+            try:
+                error += (str(e.details))
+            except AttributeError:
+                pass
+            raise CredShedDatabaseError(error)
 
 
     def parse_config(self):
