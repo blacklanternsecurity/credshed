@@ -6,7 +6,7 @@ import re
 import sys
 import base64
 import hashlib
-from lib.errors import *
+from .errors import *
 from pathlib import Path
 from datetime import datetime
 
