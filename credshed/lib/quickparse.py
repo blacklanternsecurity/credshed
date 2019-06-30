@@ -388,13 +388,15 @@ class QuickParse():
         '''
         delimiter is the non-alphanumeric character with the most consistent per-line count
         '''
+        excluded_chars = (b'@', b'.', b'!', b'?', b'(', b')', b'-', b'_')
+
         per_line_char_counts = dict()
         # count number of special characters for each line
         for i in range(len(lines)):
             line = lines[i]
             for j in range(len(line)):
                 char = line[j:j+1]
-                if not (char.isalnum() or char in [b'@', b'.', b'!', b'?', b'(', b')', b'-', b'_']):
+                if not (char.isalnum() or char in excluded_chars):
 
                     # hackers are silly bois
                     # so we just pretend all semicolons are colons

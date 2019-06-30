@@ -29,7 +29,7 @@ from multiprocessing import cpu_count
 
 class CredShedCLI(CredShed):
 
-    def __init__(self, output='__db__', unattended=False, metadata=True, deduplication=False, threads=2):
+    def __init__(self, output='__db__', unattended=False, metadata=True, metadata_only=False, deduplication=False, threads=2):
 
         # if we're outputting to a file instead of the DB
         if not str(output) == '__db__':
@@ -40,21 +40,28 @@ class CredShedCLI(CredShed):
                 errprint('[!] Overwriting {} - CTRL+C to cancel'.format(self.output))
                 sleep(5)
 
-        super().__init__(unattended=unattended, metadata=metadata, deduplication=deduplication, threads=threads)
+        super().__init__(unattended=unattended, metadata=metadata, metadata_only=metadata_only, deduplication=deduplication, threads=threads)
 
         if not self.db.use_metadata:
-            errprint('[*] Continuing without metadata support')
-            self.metadata=False
+            if metadata_only:
+                raise CredShedMetadataError('"metadata_only" option specified but none available')
+            else:
+                errprint('[*] Continuing without metadata support')
+                self.metadata=False
 
 
-    def _search(self, query, query_type):
+    def _search(self, query, query_type, verbose=False):
 
         start_time = datetime.now()
         num_accounts_in_db = self.db.account_count()
 
         num_results = 0
-        for result in self.search(query, query_type=query_type):
-            print(result)
+        for account in self.search(query, query_type=query_type, verbose=verbose):
+            print(str(account))
+            if verbose:
+                metadata = self.db.fetch_account_metadata(account)
+                if metadata:
+                    print(metadata)
             num_results += 1
 
         end_time = datetime.now()
@@ -73,8 +80,8 @@ def main(options):
 
     try:
         cred_shed = CredShedCLI(output=options.out, unattended=options.unattended, \
-            metadata=(not options.no_metadata), deduplication=options.deduplication, \
-            threads=options.threads)
+            metadata=(not options.no_metadata), metadata_only=options.metadata_only, \
+            deduplication=options.deduplication, threads=options.threads)
     except CredShedError as e:
         errprint('[!] {}\n'.format(str(e)))
         sys.exit(1)
@@ -107,7 +114,7 @@ def main(options):
                         # options.query_type = 'username'
                         # errprint('[+] Searching by username')
 
-                cred_shed._search(options.search, query_type=options.query_type)
+                cred_shed._search(options.search, query_type=options.query_type, verbose=options.verbose)
 
         if options.stats:
             cred_shed._stats()
@@ -146,6 +153,8 @@ if __name__ == '__main__':
     parser.add_argument('--threads',        type=int,   default=default_threads,        help='number of threads for import operations')
     parser.add_argument('-u', '--unattended',           action='store_true',            help='auto-detect import fields without user interaction')
     parser.add_argument('--no-metadata',                action='store_true',            help='disable metadata database')
+    parser.add_argument('--metadata-only',              action='store_true',            help='when importing, only import metadata')
+    parser.add_argument('-v', '--verbose',              action='store_true',            help='display all available data for each account')
 
     try:
 
@@ -154,10 +163,16 @@ if __name__ == '__main__':
             exit(0)
 
         options = parser.parse_args()
+
+        assert not (options.no_metadata and options.metadata_only), "Conflicting options: --no-metadata and --only-metadata"
         #print(options.delete_leak)
         #exit(1)
 
         main(options)
+
+    except AssertionError as e:
+        errprint('\n\n[!] {}\n'.format(str(e)))
+        exit(2)
 
     except argparse.ArgumentError as e:
         errprint('\n\n[!] {}\n[!] Check your syntax'.format(str(e)))

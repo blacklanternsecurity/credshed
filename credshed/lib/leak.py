@@ -290,6 +290,23 @@ class Source():
 
 
 
+
+class AccountMetadata():
+
+    def __init__(self, sources):
+
+        self.sources = sources
+
+
+    def __str__(self):
+
+        s = ''
+        s += '\n'.join([' |- {}'.format(str(source)) for source in self.sources])
+        return s
+
+
+
+
 class Leak():
 
     def __init__(self, source_name='unknown', source_hashtype='', source_misc='', file=None):

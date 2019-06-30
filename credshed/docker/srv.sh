@@ -135,7 +135,7 @@ delete_db()
         fi
     done
 
-    create_dirs
+    create_dirs_and_yaml
     printf '[+] Done.\n'
 
 }

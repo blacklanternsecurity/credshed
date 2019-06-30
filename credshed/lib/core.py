@@ -46,12 +46,14 @@ def number_range(s):
 
 class CredShed():
 
-    def __init__(self, output='__db__', unattended=False, metadata=True, deduplication=False, threads=2):
+    def __init__(self, output='__db__', unattended=False, metadata=None, metadata_only=False, deduplication=False, threads=2):
 
+        # if metadata = None, 
         self.metadata = metadata
+        self.metadata_only = metadata_only
 
         try:
-            self.db = DB(use_metadata=metadata)
+            self.db = DB(use_metadata=metadata, metadata_only=metadata_only)
         except ServerSelectionTimeoutError as e:
             raise CredShedTimeoutError('Connection to database timed out: {}'.format(str(e)))
 
@@ -74,7 +76,7 @@ class CredShed():
         threading.Thread(target=self._tail_comms_queue, daemon=True).start()
 
 
-    def search(self, query, query_type='email', limit=0):
+    def search(self, query, query_type='email', limit=0, verbose=False):
         '''
         query = search string(s)
         yields Account objects
@@ -91,9 +93,13 @@ class CredShed():
                 break
 
             try:
-                for result in self.db.search(str(query), query_type=query_type, max_results=limit):
+                for account in self.db.search(str(query), query_type=query_type, max_results=limit):
                     #print('{}:{}@{}:{}:{}'.format(result['username'], result['email'], result['domain'], result['password'], result['misc']))
-                    yield result
+
+                    if verbose:
+                        self.db.fetch_account_metadata(account)
+
+                    yield account
 
             except pymongo.errors.OperationFailure as e:
                 raise CredShedError('Error querying MongoDB: {}'.format(str(e)))
@@ -312,7 +318,7 @@ class CredShed():
 
             try:
 
-                db = DB(use_metadata=self.metadata)
+                db = DB(use_metadata=self.metadata, metadata_only=self.metadata_only)
 
                 # if leak_file is None, assume leak_dir is just a standalone file
                 if dir_and_file[1] is None:

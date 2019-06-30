@@ -5,6 +5,7 @@
 import copy
 import time
 import queue
+import hashlib
 import pymongo
 import traceback
 import configparser
@@ -13,7 +14,6 @@ from .util import *
 from .errors import *
 from time import sleep
 import multiprocessing
-from hashlib import sha1
 from pathlib import Path
 import concurrent.futures
 from subprocess import run, PIPE
@@ -21,8 +21,9 @@ from subprocess import run, PIPE
 
 class DB():
 
-    def __init__(self, use_metadata=True):
+    def __init__(self, use_metadata=True, metadata_only=False):
 
+        self.metadata_only = metadata_only
         self.config = self.parse_config()
 
         try:
@@ -82,6 +83,9 @@ class DB():
 
                 errprint('[!] Problem with metadata database at {}:{}\n{}'.format(\
                     meta_server, meta_port, error))
+
+        if (not self.use_metadata) and self.metadata_only:
+            raise CredShedMetadataError('"metadata_only" option specified but none is available')
 
         #self.accounts.create_index([('username', pymongo.ASCENDING)], sparse=True, background=True)
         #self.accounts.create_index([('email', pymongo.ASCENDING)], sparse=True, background=True)
@@ -187,10 +191,37 @@ class DB():
             for category in results:
                 for result in results[category]:
                     try:
-                        yield Account.from_document(result)
+                        account = Account.from_document(result)
+                        yield account
                     except AccountCreationError as e:
                         errprint('[!] {}'.format(str(e)))
             
+
+
+    def fetch_account_metadata(self, account):
+
+        if not self.use_metadata:
+            raise CredShedMetadataError('No metadata available')
+
+        if account is not None:
+            try:
+                source_ids = self.account_tags.find_one({'_id': account._id})['s']
+
+                sources = []
+                for source_id in source_ids:
+                    try:
+                        sources.append(self.get_source(source_id))
+                    except CredShedDatabaseError:
+                        errprint('[!] No metadata found for account {}'.format(str(account)))
+                        continue
+
+                account_metadata = AccountMetadata(sources)
+                return account_metadata
+
+            except KeyError:
+                raise CredShedError('Error retrieving source IDs from account {}'.format(str(account._id)))
+            except TypeError:
+                errprint('[!] No source IDs found for account {}'.format(str(account)))
 
 
 
@@ -657,14 +688,15 @@ class DB():
         try:
 
             max_attempts = 3
-
-            main_server = self.config['MONGO PRIMARY']['server']
-            main_port = int(self.config['MONGO PRIMARY']['port'])
-            main_db = self.config['MONGO PRIMARY']['db']
-
-            mongo_main_client = pymongo.MongoClient(main_server, main_port)
-            mongo_main = mongo_main_client[main_db]
             unique_accounts = 0
+
+            if not self.metadata_only:
+                main_server = self.config['MONGO PRIMARY']['server']
+                main_port = int(self.config['MONGO PRIMARY']['port'])
+                main_db = self.config['MONGO PRIMARY']['db']
+
+                mongo_main_client = pymongo.MongoClient(main_server, main_port)
+                mongo_main = mongo_main_client[main_db]
 
             if self.use_metadata:
                 meta_server = self.config['MONGO METADATA']['server']
@@ -706,9 +738,12 @@ class DB():
 
                             try:
 
-                                num_inserted = self._mongo_main_add_batch(mongo_main, source_id, copy.deepcopy(batch))
+                                if not self.metadata_only:
+                                    num_inserted = self._mongo_main_add_batch(mongo_main, source_id, copy.deepcopy(batch))
                                 if self.use_metadata:
-                                    self._mongo_meta_add_batch(mongo_meta, source_id, batch)
+                                    _ = self._mongo_meta_add_batch(mongo_meta, source_id, batch)
+                                    if self.metadata_only:
+                                        num_inserted = int(_)
 
                             except pymongo.errors.PyMongoError as e:
                                 error = str(e)
@@ -719,7 +754,6 @@ class DB():
                                 comms_queue.put('Error in _add_batches():\n{}'.format(error))
 
                             unique_accounts += num_inserted
-
 
                     except queue.Empty:
                         sleep(.1)
@@ -744,7 +778,6 @@ class DB():
 
         except KeyboardInterrupt:
             return
-
 
 
 
