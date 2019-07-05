@@ -5,18 +5,17 @@
 import os
 import queue
 import random
+import logging
 import threading
 from .db import DB
 from .leak import *
 from .errors import *
 from math import sqrt
+import pymongo.errors
 from time import sleep
 from .quickparse import *
 from datetime import datetime
 from multiprocessing import cpu_count
-from pymongo.errors import ServerSelectionTimeoutError
-
-
 
 
 
@@ -63,8 +62,6 @@ class CredShed():
         self.deduplication = deduplication
 
         self.errors = []
-        self.comms_queue = queue.Queue()
-        self.print_lock = threading.Semaphore()
 
         # overwrite output file
         if not self.output.name == '__db__':
@@ -73,7 +70,17 @@ class CredShed():
 
         self.STOP = False
 
-        threading.Thread(target=self._tail_comms_queue, daemon=True).start()
+        # set up logging
+        log_file = '/var/log/credshed/credshed.log'
+        log_level=logging.DEBUG
+        log_format='%(asctime)s\t%(levelname)s\t%(name)s\t%(message)s'
+        try:
+            logging.basicConfig(level=log_level, filename=log_file, format=log_format)
+        except (PermissionError, FileNotFoundError):
+            logging.basicConfig(level=log_level, filename='credshed.log', format=log_format)
+            errprint('[!] Unable to create log file at {}, logging to current directory'.format(log_file))
+        self.log = logging.getLogger('credshed')
+        self.log.setLevel(log_level)
 
 
     def search(self, query, query_type='email', limit=0, verbose=False):
@@ -139,7 +146,7 @@ class CredShed():
             self.threads = 2
 
             pool = [None] * file_threads
-            self._print('[+] {:,} files detected, adding in parallel ({} thread(s), {} process(es) per file)'.format(len(to_add), file_threads, self.threads))
+            self.log.info('[+] {:,} files detected, adding in parallel ({} thread(s), {} process(es) per file)'.format(len(to_add), file_threads, self.threads))
 
             try:
                 completed = 0
@@ -160,7 +167,7 @@ class CredShed():
                                     else:
                                         completed += 1
                                         time_elapsed = datetime.now() - start_time
-                                        self._print('>> {:,}/{:,} ({:.1f}%) files completed in {} <<'.format(completed, len(to_add), (completed/len(to_add)*100), str(time_elapsed).split('.')[0]))
+                                        self.log.info('{:,}/{:,} ({:.1f}%) files completed in {}'.format(completed, len(to_add), (completed/len(to_add)*100), str(time_elapsed).split('.')[0]))
 
                                 except AttributeError:
                                     pass
@@ -175,13 +182,14 @@ class CredShed():
                         except AssertionError:
                             break
 
-                self._print('[+] Reached end, waiting for active threads to finish:')
+                active_threads = []
                 for t in pool:
                     try:
                         if t.is_alive():
-                            print('\t' + str(t))
+                            active_threads.append(str(t))
                     except AttributeError:
                         continue
+                self.log.info('[+] Reached end, waiting for {:,} active threads to finish'.format(len(active_threads)))
 
                 while not all([t is None for t in pool]):
                     for i in range(len(pool)):
@@ -190,7 +198,7 @@ class CredShed():
                             if not t.is_alive():
                                 completed += 1
                                 time_elapsed = datetime.now() - start_time
-                                self._print('>> {:,}/{:,} ({:.1f}%) files completed in {} <<'.format(completed, len(to_add), (completed/len(to_add)*100), str(time_elapsed).split('.')[0]))
+                                self.log.info('{:,}/{:,} ({:.1f}%) files completed in {}'.format(completed, len(to_add), (completed/len(to_add)*100), str(time_elapsed).split('.')[0]))
                                 pool[i] = None
                                 continue
                     sleep(.1)
@@ -209,7 +217,7 @@ class CredShed():
                 completed = 0
                 for future in concurrent.futures.as_completed(futures):
                     completed += 1
-                    self._print('\n>> {:,} FILES COMPLETED <<\n'.format(completed))
+                    self.log.info('\n>> {:,} FILES COMPLETED <<\n'.format(completed))
 
             except KeyboardInterrupt:
                 for future in futures:
@@ -219,86 +227,31 @@ class CredShed():
             '''
 
         else:
-            self._print('[+] {:,} files detected, importing using {} threads'.format(len(to_add), self.threads))
+            self.log.info('[+] {:,} files detected, importing using {} threads'.format(len(to_add), self.threads))
 
             for l in to_add:
                 completed = 0
                 start_time = datetime.now()
 
                 file, _dir = l
-                self._print('[+] Importing {}'.format(file))
+                self.log.info('[+] Importing {}'.format(file))
     
                 self._add_by_file(l)
 
                 time_elapsed = datetime.now() - start_time
-                self._print('>> {:,}/{:,} ({:.1f}%) files completed in {} <<'.format(completed, len(to_add), (completed/len(to_add)*100), str(time_elapsed).split('.')[0]))
+                self.log.info('>> {:,}/{:,} ({:.1f}%) files completed in {} <<'.format(completed, len(to_add), (completed/len(to_add)*100), str(time_elapsed).split('.')[0]))
 
 
         if self.unattended and self.errors:
             e = 'Errors encountered:\n\t'
             e += '\n\t'.join(self.errors)
-            self._print(e)
+            self.log.info(e)
 
 
 
-    def delete_leaks(self, leak_ids=[]):
+    def delete_leak(self, source_id):
 
-        try:
-
-            if leak_ids:
-
-                to_delete = {}
-                for source_id in number_range(leak_ids):
-                    source_info = (self.db.get_source(source_id))
-                    if source_info is not None:
-                        to_delete[source_id] = str(source_id) + ': ' + str(source_info)
-
-                if to_delete:
-                    print('\nDeleting all entries from:\n\t{}'.format('\n\t'.join(to_delete.values())), end='\n\n')
-                    if not input('OK? [Y/n] ').lower().startswith('n'):
-                        start_time = datetime.now()
-
-                        # disabling threads, since concurrent deletion of leaks leaves leftover accounts
-                        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                            for source_id in to_delete:
-                                executor.submit(self.db.remove_leak, source_id)
-
-                        end_time = datetime.now()
-                        time_elapsed = (end_time - start_time)
-                        print('\n[+] Time Elapsed: {}\n'.format(str(time_elapsed).split('.')[0]))
-                else:
-                    print('[!] No valid leaks specified were specified for deletion')
-
-            else:
-
-                while 1:
-
-                    assert self.db.sources.estimated_document_count() > 0, 'No more leaks in DB'
-                    print(self.db.stats())
-                    most_recent_source_id = self.db.most_recent_source_id()
-
-                    try:
-                        to_delete = [input('Enter ID(s) to delete [{}] (CTRL+C when finished): '.format(most_recent_source_id))] or [most_recent_source_id]
-                    except ValueError:
-                        self._print('[!] Invalid entry', end='\n\n')
-                        sleep(1)
-                        continue
-
-                    self.delete_leaks(to_delete)
-
-                    '''
-                    self._print('\nDeleting all entries from:\n\t{}: {}'.format(to_delete, str(self.db.get_source(to_delete))), end='\n\n')
-                    if not input('OK? [Y/n] ').lower().startswith('n'):
-                        start_time = datetime.now()
-                        self.db.remove_leak(to_delete)
-                        end_time = datetime.now()
-                        time_elapsed = (end_time - start_time)
-                        print('\n[+] Time Elapsed: {}\n'.format(str(time_elapsed).split('.')[0]))
-                    '''
-
-        except KeyboardInterrupt:
-            print('\n[*] Deletion cancelled')
-            sys.exit(1)
+        self.db.delete_leak(int(source_id))
 
 
 
@@ -333,10 +286,8 @@ class CredShed():
                     q = QuickParse(file=leak_file, source_name=leak_friendly_name, unattended=self.unattended, strict=True)
 
                 except QuickParseError as e:
-                    e = '[!] {}'.format(str(e))
-                    e2 = '[*] Falling back to non-strict mode'
-                    self.comms_queue.put(e)
-                    self.comms_queue.put(e2)
+                    self.log.warning('{}'.format(str(e)))
+                    self.log.warning('{} falling back to non-strict mode'.format(leak_file))
                     q = QuickParse(file=leak_file, source_name=leak_friendly_name, unattended=self.unattended, strict=False)
                     #self.errors.append(e)
                     #self.errors.append(e2)
@@ -345,7 +296,7 @@ class CredShed():
                     if self.unattended:
                         raise
                     else:
-                        self.comms_queue.put('\n[*] Skipping {}'.format(str(leak_file)))
+                        self.log.info('Skipping {}'.format(str(leak_file)))
                         return
 
                 leak = Leak(q.source_name, q.source_hashtype, q.source_misc)
@@ -355,11 +306,13 @@ class CredShed():
                     source_already_in_db = db.sources.find_one(leak.source.document(misc=False, date=False))
 
                     if source_already_in_db:
+                        source_id, source_name = source_already_in_db['_id'], source_already_in_db['name']
                         if not self.unattended:
-                            answer = input('Source ID {} ({}) already exists, merge? (Y/n)'.format(source_already_in_db['_id'], source_already_in_db['name'])) or 'y'
+                            answer = input('Source ID {} ({}) already exists, merge? (Y/n)'.format()) or 'y'
                             if not answer.lower().startswith('y'):
-                                self.comms_queue.put('[*] Skipping existing source ID {} ({})'.format(source_already_in_db['_id'], source_already_in_db['name']))
+                                self.log.info('Skipping existing source ID {} ({})'.format(source_id, source_name))
                                 return
+                            self.log.warning('Merging {} with existing source ID {} ({})'.format(leak_file, source_id, source_name))
 
                 except pymongo.errors.PyMongoError as e:
                     error = str(e)
@@ -368,7 +321,7 @@ class CredShed():
                     except AttributeError:
                         pass
                     if error:
-                        self.comms_queue.put(error)
+                        self.log.error(error)
                     self.STOP = True
                     break
 
@@ -378,45 +331,46 @@ class CredShed():
 
                 else:
                     account_counter = 0
-                    self.comms_queue.put('[+] Deduplicating accounts')
+                    self.log.info('Deduplicating accounts')
                     for account in q:
                         if not self.STOP:
-                            #self._print(str(account))
+                            #self.log.info(str(account))
                             #try:
                             leak.add_account(account)
                             #except ValueError:
                             #    continue
                             account_counter += 1
-                            if account_counter % 1000 == 0:
-                                self._print('\r[+] {:,} '.format(account_counter), end='')
-                    self._print('\r[+] {:,}'.format(account_counter))
+                            if account_counter % 1000 == 0 and not self.unattended:
+                                sys.stderr.write('\r[+] {:,} '.format(account_counter), end='')
+
+                    if not self.unattended:
+                        sys.stderr.write('\r[+] {:,}'.format(account_counter))
+                    self.log.info('{:,} accounts deduplicated for {}'.format(account_counter, leak_file))
 
 
                 if self.output.name == '__db__':
 
                     #print('\nAdding:\n{}'.format(str(leak)))
                     #file_thread_executor.submit(db.add_leak, leak, num_threads=options.threads)
-                    #self._print('[{}] Calling db.add_leak()'.format(dir_and_file))
+                    #self.log.info('[{}] Calling db.add_leak()'.format(dir_and_file))
                     import_result = db.add_leak(leak, num_threads=self.threads)
-                    if import_result:
-                        self.comms_queue.put(import_result)
-                    #self._print('[{}] Finished calling db.add_leak()'.format(dir_and_file))
+                    #self.log.info('[{}] Finished calling db.add_leak()'.format(dir_and_file))
 
                 else:
-                    self._print('\n[+] Writing batch to {}\n'.format(str(self.output)))
+                    self.log.info('Writing leak {} to {}'.format(leak_file, str(self.output)))
                     # open file in append mode because we may be parsing more than one file
-                    with open(str(self.output), 'wb+') as f:
+                    with open(str(self.output), 'ab') as f:
                         for account in leak:
-                            #self._print(str(account))
+                            #self.log.info(str(account))
                             f.write(account.to_bytes() + b'\n')
                     #leak.dump()
 
             except QuickParseError as e:
-                self.comms_queue.put('[!] {}'.format(str(e)))
+                self.log.error('{}'.format(str(e)))
                 break
 
             except CredShedDatabaseError as e:
-                self.comms_queue.put(str(e))
+                self.log.error(str(e))
                 max_tries -= 1
                 continue
 
@@ -428,19 +382,6 @@ class CredShed():
                     pass
 
             break
-
-
-    def _tail_comms_queue(self):
-
-        while 1:
-            try:
-                comm = self.comms_queue.get_nowait()
-                if comm:
-                    sys.stderr.write(str(comm) + '\n')
-            except queue.Empty:
-                sleep(.1)
-            except BrokenPipeError:
-                return
 
 
     def _get_leak_dirs(self, path):
@@ -484,10 +425,3 @@ class CredShed():
             for dir_name, dir_list, file_list in os.walk(d):
                 for file in file_list:
                     yield (d.parent, (Path(dir_name) / file).relative_to(d.parent))
-
-
-    def _print(self, *s, end='\n'):
-
-        s = [str(_) for _ in s]
-        with self.print_lock:
-            sys.stderr.write(' '.join(s) + end)

@@ -20,3 +20,17 @@ class CredShedDatabaseError(CredShedError):
 
 class AccountCreationError(CredShedError):
     pass
+
+# QuickParse-specific
+
+class QuickParseError(CredShedError):
+    pass
+
+class QuickParsePermissionError(QuickParseError):
+    pass
+
+class DelimiterError(QuickParseError):
+    pass
+
+class FieldDetectionError(QuickParseError):
+    pass
