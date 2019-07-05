@@ -19,11 +19,26 @@ TODO:
 '''
 
 import sys
+import logging
 import argparse
 from credshed import *
 from pathlib import Path
 from datetime import datetime
 from multiprocessing import cpu_count
+
+# set up logging
+log = logging.getLogger('credshed.cli')
+log.setLevel(logging.DEBUG)
+
+# log INFO and up to stderr
+console = logging.StreamHandler()
+console.setLevel(logging.INFO)
+# set a format which is simpler for console use
+formatter = logging.Formatter('[%(levelname)s] %(message)s')
+# tell the handler to use this format
+console.setFormatter(formatter)
+# add the handler to the root logger
+logging.getLogger('credshed').addHandler(console)
 
 
 
@@ -37,7 +52,7 @@ class CredShedCLI(CredShed):
             self.output = self.output.resolve()
             assert not self.output.is_dir(), 'Creation of {} is blocked'.format(self.output)
             if self.output.exists():
-                errprint('[!] Overwriting {} - CTRL+C to cancel'.format(self.output))
+                self.log.warning('[!] Overwriting {} - CTRL+C to cancel'.format(self.output))
                 sleep(5)
 
         super().__init__(unattended=unattended, metadata=metadata, metadata_only=metadata_only, deduplication=deduplication, threads=threads)
@@ -46,7 +61,7 @@ class CredShedCLI(CredShed):
             if metadata_only:
                 raise CredShedMetadataError('"metadata_only" option specified but none available')
             else:
-                errprint('[*] Continuing without metadata support')
+                self.log.warning('[*] Continuing without metadata support')
                 self.metadata=False
 
 
@@ -66,13 +81,66 @@ class CredShedCLI(CredShed):
 
         end_time = datetime.now()
         time_elapsed = (end_time - start_time)
-        errprint('\n[+] Searched {:,} accounts in {} seconds'.format(num_accounts_in_db, str(time_elapsed)[:-4]))
-        errprint('[+] {:,} results for "{}"'.format(num_results, '|'.join(query)))
+        self.log.info('Searched {:,} accounts in {} seconds'.format(num_accounts_in_db, str(time_elapsed)[:-4]))
+        self.log.info('{:,} results for "{}"'.format(num_results, '|'.join(query)))
 
 
     def _stats(self):
 
         print(self.stats())
+
+
+    def delete_leaks(self, source_ids=[]):
+        
+        try:
+
+            if source_ids:
+
+                to_delete = {}
+                for source_id in number_range(source_ids):
+                    source_info = (self.db.get_source(source_id))
+                    if source_info is not None:
+                        to_delete[source_id] = str(source_id) + ': ' + str(source_info)
+
+                if to_delete:
+                    errprint('\nDeleting accounts from:\n\t{}'.format('\n\t'.join(to_delete.values())), end='\n\n')
+                    if not input('OK? [Y/n] ').lower().startswith('n'):
+                        start_time = datetime.now()
+
+                        self.log.debug(errprint('Deleting accounts from: {}'.format(', '.join(to_delete.values()))))
+
+                        for source_id in to_delete:
+                            self.delete_leak(source_id)
+
+                        end_time = datetime.now()
+                        time_elapsed = (end_time - start_time)
+
+                        errprint('\nDeletion finished.  Time Elapsed: {}'.format(str(time_elapsed).split('.')[0]))
+                        self.log.debug('Deletion of {} finished.  Time Elapsed: {}\n'.format(', '.join(to_delete.values()), str(time_elapsed).split('.')[0]))
+                else:
+                    self.log.warning('No valid leaks specified were specified for deletion')
+
+            else:
+
+                while 1:
+
+                    assert self.db.sources.estimated_document_count() > 0, 'No more leaks in DB'
+                    print(self.db.stats())
+                    most_recent_source_id = self.db.most_recent_source_id()
+
+                    try:
+                        to_delete = [input('Enter ID(s) to delete [{}] (CTRL+C when finished): '.format(most_recent_source_id))] or [most_recent_source_id]
+                    except ValueError:
+                        errprint('[!] Invalid entry', end='\n\n')
+                        sleep(1)
+                        continue
+
+                    self.delete_leaks(to_delete)
+
+
+        except KeyboardInterrupt:
+            errprint('\n[*] Deletion cancelled')
+            sys.exit(1)
 
 
 
@@ -104,10 +172,10 @@ def main(options):
                 if options.query_type == 'auto':
                     if Account.is_email(keyword):
                         options.query_type = 'email'
-                        errprint('[+] Searching by email')
+                        log.info('Searching by email: "{}"'.format(keyword))
                     elif re.compile(r'^([a-zA-Z0-9_\-\.]*)\.([a-zA-Z]{2,8})$').match(keyword):
                         options.query_type = 'domain'
-                        errprint('[+] Searching by domain')
+                        log.info('Searching by domain: "{}"'.format(keyword))
                     else:
                         raise CredShedError('Failed to auto-detect query type, please specify with --query-type')
                         return
@@ -120,7 +188,7 @@ def main(options):
             cred_shed._stats()
 
     except CredShedError as e:
-        errprint('[!] {}'.format(str(e)))
+        self.log.error('{}'.format(str(e)))
 
     except KeyboardInterrupt:
         cred_shed.STOP = True

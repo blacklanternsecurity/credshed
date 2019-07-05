@@ -4,25 +4,15 @@
 
 import random
 import string
+import logging
 from .db import *
 from .leak import *
+from .errors import *
 from time import sleep
 import subprocess as sp
 from pathlib import Path
 from datetime import datetime
 from statistics import mode, StatisticsError
-
-
-# custom error classes
-
-class QuickParseError(Exception):
-    pass
-
-class DelimiterError(QuickParseError):
-    pass
-
-class FieldDetectionError(QuickParseError):
-    pass
 
 
 
@@ -77,6 +67,9 @@ class QuickParse():
             self.mapping = dict()
 
             self.gather_info()
+
+        # set up logging
+        self.log = logging.getLogger('credshed.quickparse')
         
 
 
@@ -608,5 +601,6 @@ class QuickParse():
                     except AccountCreationError as e:
                         self._adaptive_print('[!] {}'.format(str(e)))
                         continue
+
         except PermissionError:
-            raise QuickParseError('Permission denied on {}'.format(str(self.file)))
+            raise QuickParsePermissionError('Permission denied on {}'.format(str(self.file)))

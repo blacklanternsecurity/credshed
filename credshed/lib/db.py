@@ -6,6 +6,7 @@ import copy
 import time
 import queue
 import hashlib
+import logging
 import pymongo
 import traceback
 import configparser
@@ -81,7 +82,7 @@ class DB():
                 except AttributeError:
                     pass
 
-                errprint('[!] Problem with metadata database at {}:{}\n{}'.format(\
+                self.log.warning('Problem with metadata database at {}:{}\n{}'.format(\
                     meta_server, meta_port, error))
 
         if (not self.use_metadata) and self.metadata_only:
@@ -99,6 +100,9 @@ class DB():
         self.leak_unique = 0
         self.leak_overall = 0
         self.leak_size = 0
+
+        # set up logging
+        self.log = logging.getLogger('credshed.db')
 
 
     def search(self, keywords, query_type='email', max_results=10000):
@@ -147,7 +151,7 @@ class DB():
 
                     query_regex = r'^{}.*'.format(query_str)
                     query = {'_id': {'$regex': query_regex}}
-                    errprint(query)
+                    self.log.info('Raw mongo query: {}'.format(str(query)))
                     results['emails'] = self.accounts.find(query).limit(max_results)
                     #results['emails'] = self.accounts.find({'email': email, '_id': {'$regex': domain_regex}})
                     #results['emails'] = self.accounts.find({'email': email})
@@ -158,7 +162,7 @@ class DB():
                     '''
                     email = r'^{}$'.format(keyword.lower())
                     query = {'email': {'$regex': email}}
-                    errprint(query)
+                    self.log.info(query)
                     results['emails'] = self.accounts.find(query).limit(max_results)
                     '''
 
@@ -176,13 +180,13 @@ class DB():
 
                 num_sections = len(domain.split('.'))
                 query = {'_id': {'$regex': query_regex}}
-                errprint(query)
+                self.log.info('Raw mongo query: {}'.format(str(query)))
                 results['emails'] = self.accounts.find(query).limit(max_results)
 
             elif query_type == 'username':
                 query_regex = r'^{}$'.format(re.escape(keyword))
                 query = {'username': {'$regex': query_regex}}
-                errprint(query)
+                self.log.info('Raw mongo query: {}'.format(str(query)))
                 results['usernames'] = self.accounts.find(query).limit(max_results)
 
             else:
@@ -194,7 +198,7 @@ class DB():
                         account = Account.from_document(result)
                         yield account
                     except AccountCreationError as e:
-                        errprint('[!] {}'.format(str(e)))
+                        self.log.warning('{}'.format(str(e)))
             
 
 
@@ -212,7 +216,7 @@ class DB():
                     try:
                         sources.append(self.get_source(source_id))
                     except CredShedDatabaseError:
-                        errprint('[!] No metadata found for account {}'.format(str(account)))
+                        self.log.debug('No metadata found for account {}'.format(str(account)))
                         continue
 
                 account_metadata = AccountMetadata(sources)
@@ -221,7 +225,7 @@ class DB():
             except KeyError:
                 raise CredShedError('Error retrieving source IDs from account {}'.format(str(account._id)))
             except TypeError:
-                errprint('[!] No source IDs found for account {}'.format(str(account)))
+                self.log.debug('No source IDs found for account {}'.format(str(account)))
 
 
 
@@ -296,10 +300,9 @@ class DB():
         '''
 
         pool = []
-        import_result = []
 
-        #errprint('[+] Adding leak')
-        #errprint('[+] Using {} threads'.format(num_threads))
+        self.log.debug('Adding leak {}'.format(str(leak.source)))
+        self.log.debug('Using {} threads'.format(num_threads))
 
         try:
             self.leak_size = len(leak)
@@ -321,41 +324,46 @@ class DB():
                 comms_queue = comms_queues[thread_id]
                 while 1:
                     p[0] = multiprocessing.Process(target=self._add_batches, args=(batch_queue, result_queue, comms_queue, source_id), daemon=True)
-                    sleep(.1)
+                    sleep(.2)
                     try:
                         p[0].start()
                     except AttributeError:
                         # AttributeError: 'NoneType' object has no attribute 'poll'
                         continue
 
-                    sleep(.2)
+                    sleep(.5)
 
-                    # Restart thread if startup signal isn't received
+                    # Check if thread sent success signal
                     try:
-                        comms_queue.get_nowait()
-                        pool.append(p[0])
-                        #errprint('[+] Worker started')
-                        #errprint('[+] Thread {} started successfully'.format(thread_id))
-                        break
-                    except queue.Empty:
-                        #errprint('[+] Thread {} failed to start, terminating'.format(thread_id))
-
-                        tries = 10
-                        while tries > 0:
-                            tries -= 1
-                            try:
-                                p[0].terminate()
-                                sleep(.1)
-                                p[0].kill()
-                                sleep(.1)
-                                p[0].close()
-                                p.clear()
-                                p = [None]
-                            except ValueError:
-                                # ValueError "Cannot close a process while it is still running."
-                                sleep(.1)
-                                continue
+                        signal = comms_queue.get_nowait()
+                        if signal == 'huge_success':
+                            pool.append(p[0])
+                            self.log.debug('Worker started')
+                            self.log.debug('Thread {} started successfully'.format(thread_id))
                             break
+
+                    except queue.Empty:
+                        pass
+
+                    # Kill thread and try again if it failed to start
+                    self.log.debug('Thread {} failed to start, terminating'.format(thread_id))
+
+                    tries = 10
+                    while tries > 0:
+                        tries -= 1
+                        try:
+                            p[0].terminate()
+                            sleep(.2)
+                            p[0].kill()
+                            sleep(.2)
+                            p[0].close()
+                            p.clear()
+                            p = [None]
+                        except ValueError:
+                            # ValueError "Cannot close a process while it is still running."
+                            sleep(.1)
+                            continue
+                        break
 
 
             # stuff it down the pipes
@@ -372,7 +380,7 @@ class DB():
                 try:
                     new_accounts = result_queue.get_nowait()
                     if new_accounts is None:
-                        #errprint('[+] Worker finished')
+                        self.log.debug('Worker finished')
                         threads_finished += 1
                         if threads_finished == num_threads:
                             break
@@ -398,7 +406,7 @@ class DB():
                 while 1:
                     try:
                         error = comms_queue.get_nowait()
-                        if error is not True:
+                        if error not in ('huge_success', 'all_done_here'):
                             errors.append(error)
                     except queue.Empty:
                         break
@@ -407,12 +415,14 @@ class DB():
             time_elapsed = (end_time - start_time)
 
             if self.leak_overall > 0:
-                import_result.append('[+] Import results for "{}"'.format(leak.source.name))
-                import_result.append('[+]    total accounts: {:,}'.format(self.leak_overall))
-                import_result.append('[+]    unique accounts: {:,} ({:.1f}%)'.format(self.leak_unique, ((self.leak_unique/self.leak_overall)*100)))
-                import_result.append('[+]    time elapsed: {} hours, {} minutes, {} seconds'.format(int(time_elapsed/3600), int((time_elapsed%3600)/60), int((time_elapsed%3600)%60)))
+                self.log.info('Import results for "{}"'.format(leak.source.name))
+                self.log.info('   total accounts: {:,}'.format(self.leak_overall))
+                self.log.info('   unique accounts: {:,} ({:.1f}%)'.format(self.leak_unique, ((self.leak_unique/self.leak_overall)*100)))
+                self.log.info('   time elapsed: {} hours, {} minutes, {} seconds'.format(int(time_elapsed/3600), int((time_elapsed%3600)/60), int((time_elapsed%3600)%60)))
             if errors:
-                import_result.append('[!] Errors:\n       {}'.format('\n       '.join([str(e) for e in errors])))
+                self.log.error('Errors:')
+                for e in errors:
+                    self.log.error('       {}'.format(str(e)))
 
         except pymongo.errors.PyMongoError as e:
             error = str(e)
@@ -420,13 +430,13 @@ class DB():
                 error += (str(e.details))
             except AttributeError:
                 pass
-            import_result.append(error)
+            self.log.error(error)
 
         except QuickParseError as e:
-            import_result.append('[!] {}'.format(str(e)))
+            self.log.error(str(e))
 
         except Exception as e:
-            import_result.append(str(traceback.format_exc()))
+            self.log.critical(str(traceback.format_exc()))
 
         finally:
             # reset leak counters
@@ -450,10 +460,8 @@ class DB():
                         continue
                     break
 
-            return '\n'.join([r.strip() for r in import_result if r])
 
-
-    def remove_leak(self, source_id, batch_size=10000):
+    def delete_leak(self, source_id, batch_size=10000):
 
         if not self.use_metadata:
             raise CredShedMetadataError('Removing leaks requires access to metadata. No metadata database is currently attached.')
@@ -463,7 +471,7 @@ class DB():
             accounts_deleted = 0
             to_delete = []
 
-            errprint('\n[*] Deleting leak "{}{}"'.format(source.name, ':{}'.format(source.hashtype) if source.hashtype else ''))
+            self.log.info('\nDeleting leak "{}{}"'.format(source.name, ':{}'.format(source.hashtype) if source.hashtype else ''))
 
             try:
 
@@ -473,7 +481,7 @@ class DB():
                     if len(to_delete) % batch_size == 0:
                         accounts_deleted += self.accounts.bulk_write(to_delete, ordered=False).deleted_count
                         to_delete.clear()
-                        errprint('\r[+] Deleted {:,} accounts'.format(accounts_deleted), end='')
+                        errprint('\rDeleted {:,} accounts'.format(accounts_deleted), end='')
 
                 if to_delete:
                     accounts_deleted += self.accounts.bulk_write(to_delete, ordered=False).deleted_count
@@ -490,12 +498,12 @@ class DB():
 
 
             except TypeError as e:
-                errprint(str(e))
-                errprint('[!] Can\'t find source "{}:{}"'.format(source.name, source.hashtype))
+                self.log.error(str(e))
+                self.log.error('[!] Can\'t find source "{}:{}"'.format(source.name, source.hashtype))
 
-            errprint('\n[*] {:,} accounts deleted'.format(accounts_deleted))
-            errprint('[*] Done')
-            # sleep(1)
+            errprint('')
+            self.log.info('{:,} accounts deleted'.format(accounts_deleted))
+
             return accounts_deleted
 
 
@@ -506,7 +514,7 @@ class DB():
         source_in_db = self.sources.find_one(source_doc)
         if source_in_db is not None:
             source_id, source_name = source_in_db['_id'], source_in_db['name']
-            errprint('[*] Source ID {} ({}) already exists, merging'.format(source_id, source_name))
+            self.log.info('Source ID {} ({}) already exists, merging'.format(source_id, source_name))
             return source_id
             #assert False, 'Source already exists'
         else:
@@ -551,11 +559,11 @@ class DB():
             '''
             if counters:
                 counters_stats = self.db.command('collstats', 'counters', scale=1048576)
-                errprint('[+] Counter Stats (MB):')
+                self.log.info('[+] Counter Stats (MB):')
                 for k in counters_stats:
                     if k not in ['wiredTiger', 'indexDetails']:
-                        errprint('\t{}: {}'.format(k, counters_stats[k]))
-                errprint()
+                        self.log.info('\t{}: {}'.format(k, counters_stats[k]))
+                self.log.info()
             '''
 
             if sources:
@@ -706,12 +714,12 @@ class DB():
                 mongo_meta = mongo_meta_client[meta_db]
 
             try:
-                comms_queue.put(True)
+                comms_queue.put('huge_success')
                 sleep(1)
 
                 while 1:
                     try:
-                        #errprint('[+] Getting batch')
+                        #self.log.info('[+] Getting batch')
                         num_inserted = 0
                         batch = batch_queue.get_nowait()
 
@@ -802,10 +810,12 @@ class DB():
 
             # sleep for a bit and try again if there's an error
             except (pymongo.errors.OperationFailure, pymongo.errors.InvalidOperation) as e:
+                error = '\nError adding account batch to main DB.  Attempting to continue.\n{}'.format(str(e)[:64])
                 try:
-                    error_details = str(e.details)[:128]
+                    error += ('\n' + str(e.details)[:64])
                 except AttributeError:
                     pass
+                self.comms_queue.put(error)
                 attempts_left -= 1
                 sleep(5)
                 continue
@@ -832,13 +842,14 @@ class DB():
 
             # sleep for a bit and try again if there's an error
             except (pymongo.errors.OperationFailure, pymongo.errors.InvalidOperation) as e:
-                #errprint('\n[!] Error adding account batch to meta DB.  Attempting to continue.\n{}'.format(str(e)[:64]))
-                #try:
-                #    errprint(str(e.details)[:64])
-                #except AttributeError:
-                #    pass
+                error = '\nError adding account batch to meta DB.  Attempting to continue.\n{}'.format(str(e)[:64])
+                try:
+                    error += ('\n' + str(e.details)[:64])
+                except AttributeError:
+                    pass
+                self.comms_queue.put(error)
                 attempts_left -= 1
                 sleep(5)
                 continue
 
-        #errprint('\n[!] Failed to add batch to meta DB after {} tries'.format(max_attempts))
+        raise CredShedDatabaseError('\nFailed to add batch to meta DB after {} tries'.format(max_attempts))
