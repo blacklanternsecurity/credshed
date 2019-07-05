@@ -305,6 +305,11 @@ class AccountMetadata():
         return s
 
 
+    def __len__(self):
+
+        return len(self.sources)
+
+
 
 
 class Leak():

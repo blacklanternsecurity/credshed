@@ -207,25 +207,26 @@ class DB():
         if not self.use_metadata:
             raise CredShedMetadataError('No metadata available')
 
+        sources = []
+
         if account is not None:
             try:
                 source_ids = self.account_tags.find_one({'_id': account._id})['s']
 
-                sources = []
                 for source_id in source_ids:
                     try:
                         sources.append(self.get_source(source_id))
                     except CredShedDatabaseError:
-                        self.log.debug('No metadata found for account {}'.format(str(account)))
+                        self.log.warning('No database entry found for source ID {}'.format(str(source_id)))
                         continue
-
-                account_metadata = AccountMetadata(sources)
-                return account_metadata
 
             except KeyError:
                 raise CredShedError('Error retrieving source IDs from account {}'.format(str(account._id)))
             except TypeError:
-                self.log.debug('No source IDs found for account {}'.format(str(account)))
+                self.log.debug('No source IDs found for account ID {}'.format(str(account._id)))
+
+            account_metadata = AccountMetadata(sources)
+            return account_metadata
 
 
 
