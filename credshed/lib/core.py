@@ -53,7 +53,7 @@ class CredShed():
 
         try:
             self.db = DB(use_metadata=metadata, metadata_only=metadata_only)
-        except ServerSelectionTimeoutError as e:
+        except pymongo.errors.ServerSelectionTimeoutError as e:
             raise CredShedTimeoutError('Connection to database timed out: {}'.format(str(e)))
 
         self.threads = threads

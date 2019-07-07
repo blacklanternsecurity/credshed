@@ -305,6 +305,12 @@ class AccountMetadata():
         return s
 
 
+    def __iter__(self):
+
+        for source in self.sources:
+            yield source
+
+
     def __len__(self):
 
         return len(self.sources)

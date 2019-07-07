@@ -211,10 +211,10 @@ if __name__ == '__main__':
 
     parser.add_argument('search',                       nargs='*',                      help='search term(s)')
     parser.add_argument('-q', '--query-type',           default='auto',                 help='query type (email, domain, or username)')
-    parser.add_argument('-a', '--add',      type=Path,  nargs='+',                      help='add file(s) to DB')
+    parser.add_argument('-a', '--add',      type=Path,  nargs='+',                      help='add files or directories to the database')
     parser.add_argument('-t', '--stats',    action='store_true',                        help='show db stats')
-    parser.add_argument('-o', '--out',      type=Path,  default='__db__',               help='write output to file instead of DB')
-    parser.add_argument('-d', '--delete-leak',          nargs='*',                      help='delete leak(s) from DB, e.g. "1-3,5,7-9"', metavar='SOURCE_ID')
+    parser.add_argument('-o', '--out',      type=Path,  default='__db__',               help='write output to file instead of database')
+    parser.add_argument('-d', '--delete-leak',          nargs='*',                      help='delete leak(s) from database, e.g. "1-3,5,7-9"', metavar='SOURCE_ID')
     parser.add_argument('-dd', '--deduplication',       action='store_true',            help='deduplicate accounts ahead of time (may eat memory)')
     parser.add_argument('-p', '--search-passwords',     action='store_true',            help='search by password')
     parser.add_argument('-m', '--search-description',   action='store_true',            help='search by description / misc')

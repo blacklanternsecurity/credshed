@@ -210,8 +210,18 @@ class DB():
         sources = []
 
         if account is not None:
+
             try:
-                source_ids = self.account_tags.find_one({'_id': account._id})['s']
+
+                _id = ''
+                if type(account) == str:
+                    _id = account
+                elif type(account) == Account:
+                    _id = account._id
+                else:
+                    raise TypeError
+
+                source_ids = self.account_tags.find_one({'_id': _id})['s']
 
                 for source_id in source_ids:
                     try:
@@ -220,10 +230,10 @@ class DB():
                         self.log.warning('No database entry found for source ID {}'.format(str(source_id)))
                         continue
 
-            except KeyError:
-                raise CredShedError('Error retrieving source IDs from account {}'.format(str(account._id)))
-            except TypeError:
-                self.log.debug('No source IDs found for account ID {}'.format(str(account._id)))
+            except KeyError as e:
+                raise CredShedError('Error retrieving source IDs from account "{}": {}'.format(str(_id), str(e)))
+            except TypeError as e:
+                self.log.debug('No source IDs found for account ID "{}": {}'.format(str(_id), str(e)))
 
             account_metadata = AccountMetadata(sources)
             return account_metadata

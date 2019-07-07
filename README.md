@@ -1,8 +1,8 @@
 # credshed
 A full-featured solution for injesting, organizing, storing, and querying public leaks.  Injests gigantic files or entire directories with ease.  (For funzies, try giving it your `/etc` directory and watch it pull out every single email address!)
 
-![credshed-gui-screenshot](https://user-images.githubusercontent.com/20261699/60697972-c059f900-9eb2-11e9-8a12-7db633c00eb0.png)
-[credshed-gui web front-end](https://github.com/blacklanternsecurity/credshed)
+![credshed-gui-screenshot](https://user-images.githubusercontent.com/20261699/60762868-33d44580-a02e-11e9-8294-200c711328f5.png)
+[credshed-gui web front-end](https://github.com/blacklanternsecurity/credshed-gui)
 
 ## Usage
 ~~~
