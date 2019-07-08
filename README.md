@@ -39,7 +39,7 @@ optional arguments:
 ~~~
 
 ## Setup
-Database setup is completely automated with the `srv.sh` script located in `credshed/docker`
+Database setup is almost entirely automated with the `srv.sh` script located in `credshed/docker`
 ~~~
 $ ./srv.sh --help
 Usage: srv.sh [option]
@@ -53,20 +53,67 @@ Usage: srv.sh [option]
         clean   remove artifacts such as docker containers & images
         delete  delete entire database
 ~~~
-First, take a look at the settings in `srv.config`.
-Choose the number of shards you want and the location of the database
+
+1. If you intend to start the database automatically, you need the following in `/etc/docker/daemon.json`:
+~~~
+{
+    "userns-remap": "default"
+}
+~~~
+This remaps "root" inside the MongoDB containers to a higher UID/GID with no local privileges.
+
+2. Take a look at the settings in `credshed/docker/srv.config`
+  - Choose the number of shards you want and the location of the database
+  - And for the love of geebus, change the password
 ~~~
 $ cd credshed/docker
 $ cat srv.config
-srv_dir='/tmp/credshed/srv'
+num_shards=4
 
 mongo_main_dir='/tmp/credshed/db/main'
 mongo_meta_dir='/tmp/credshed/db/meta'
 mongo_script_dir='/tmp/credshed/mongo_scripts'
-
-num_shards=10
+mongo_user=root
+mongo_pass=INTHENAMEOFALLTHATISHOLYPLEASECHANGETHIS
 ~~~
-Once srv.config has been edited to your liking, execute this command to perform all the necessary setup.  Execution will take a couple of minutes and you will see a lot of output.  Note that after `prep` and `init` have been run, you only need to execute `start` and `stop` going forward.
+3. Once `srv.config` has been edited to your liking, execute this command to perform all the necessary setup.  Execution will take a couple of minutes and you will see a lot of output.  Note that after `prep` and `init` have been run, you only need to execute `start` and `stop` going forward.
 ~~~
 $ ./srv.sh prep start init
 ~~~
+4. Delete `srv.config` (or remove the password) as it is no longer needed
+5. Take a look at `credshed.config`
+  - Change the password to the same one as before
+  - Fill out the appropriate server and port settings
+~~~
+# required
+[MONGO PRIMARY]
+server=127.0.0.1
+port=27000
+db=credshed
+
+# not required
+[MONGO METADATA]
+server=127.0.0.1
+port=27001
+db=credshed
+
+[GLOBAL]
+# username and password are applied to both instances
+user=root
+pass=INTHENAMEOFALLTHATISHOLYPLEASECHANGETHIS
+~~~
+6. Take it for a test run
+~~~
+$ ./credshed-cli.py test@example.com
+~~~
+7. (Optional) Set the database to start automatically:
+  - First stop any running instances
+  - Edit `WorkingDirectory` in `credshed/docker/credshed.service` to match the directory where it is installed
+~~~
+$ sudo cp credshed/docker/credshed.service /etc/systemd/system/
+$ sudo systemctl enable credshed.service
+$ sudo systemctl start credshed.service
+# check on its status
+$ journalctl -xefu credshed.service
+~~~
+8. (Optional) If you want to enable logging, create the directory `/var/log/credshed` and make sure whichever user is running `credshed-cli.py` has write access
