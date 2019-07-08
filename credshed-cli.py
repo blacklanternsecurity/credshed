@@ -151,7 +151,7 @@ def main(options):
             metadata=(not options.no_metadata), metadata_only=options.metadata_only, \
             deduplication=options.deduplication, threads=options.threads)
     except CredShedError as e:
-        errprint('[!] {}\n'.format(str(e)))
+        log.critical('{}: {}\n'.format(e.__class__.__name__, str(e)))
         sys.exit(1)
 
     options.query_type = options.query_type.strip().lower()
@@ -188,7 +188,7 @@ def main(options):
             cred_shed._stats()
 
     except CredShedError as e:
-        self.log.error('{}'.format(str(e)))
+        log.error('{}: {}\n'.format(e.__class__.__name__, str(e)))
 
     except KeyboardInterrupt:
         cred_shed.STOP = True

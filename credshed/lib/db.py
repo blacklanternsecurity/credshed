@@ -31,18 +31,23 @@ class DB():
 
             ### MONGO PRIMARY ###
 
-            main_server = self.config['MONGO PRIMARY']['server']
-            main_port = int(self.config['MONGO PRIMARY']['port'])
-            main_db = self.config['MONGO PRIMARY']['db']
+            try:
+                main_server = self.config['MONGO PRIMARY']['server']
+                main_port = int(self.config['MONGO PRIMARY']['port'])
+                main_db = self.config['MONGO PRIMARY']['db']
+                self.mongo_user = self.config['GLOBAL']['user']
+                self.mongo_pass = self.config['GLOBAL']['pass']
+            except KeyError as e:
+                raise CredShedConfigError(str(e))
 
             # main DB
-            self.main_client = pymongo.MongoClient(main_server, main_port)
+            self.main_client = pymongo.MongoClient(main_server, main_port, username=self.mongo_user, password=self.mongo_pass)
             self.main_db = self.main_client[main_db]
+            try:
+                self.main_db.command('dbstats')
+            except ValueError as e:
+                raise CredShedConfigError(str(e))
 
-            #try:
-            #    self.main_db.create_collection('accounts')
-            #except pymongo.errors.CollectionInvalid:
-            #    pass
             self.accounts = self.main_db.accounts
 
         except pymongo.errors.PyMongoError as e:
@@ -59,19 +64,21 @@ class DB():
 
                 ### MONGO METADATA ###
 
-                meta_server = self.config['MONGO METADATA']['server']
-                meta_port = int(self.config['MONGO METADATA']['port'])
-                meta_db = self.config['MONGO METADATA']['db']
+                try:
+                    meta_server = self.config['MONGO METADATA']['server']
+                    meta_port = int(self.config['MONGO METADATA']['port'])
+                    meta_db = self.config['MONGO METADATA']['db']
+                except KeyError as e:
+                    raise CredShedConfigError(str(e))
 
                 # meta DB (account metadata including source information, counters, leak <--> account associations, etc.)
-                self.meta_client = pymongo.MongoClient(meta_server, meta_port)
+                self.meta_client = pymongo.MongoClient(meta_server, meta_port, username=self.mongo_user, password=self.mongo_pass)
                 self.meta_db = self.meta_client[meta_db]
-                self.meta_db.command('dbstats')
+                try:
+                    self.meta_db.command('dbstats')
+                except ValueError as e:
+                    raise CredShedConfigError(str(e))
 
-                #try:
-                #    self.meta_db.create_collection('account_tags')
-                #except pymongo.errors.CollectionInvalid:
-                #    pass
                 self.account_tags = self.meta_db.account_tags
                 self.use_metadata = True
 
@@ -714,14 +721,14 @@ class DB():
                 main_port = int(self.config['MONGO PRIMARY']['port'])
                 main_db = self.config['MONGO PRIMARY']['db']
 
-                mongo_main_client = pymongo.MongoClient(main_server, main_port)
+                mongo_main_client = pymongo.MongoClient(main_server, main_port, username=self.mongo_user, password=self.mongo_pass)
                 mongo_main = mongo_main_client[main_db]
 
             if self.use_metadata:
                 meta_server = self.config['MONGO METADATA']['server']
                 meta_port = int(self.config['MONGO METADATA']['port'])
                 meta_db = self.config['MONGO METADATA']['db']
-                mongo_meta_client = pymongo.MongoClient(meta_server, meta_port)
+                mongo_meta_client = pymongo.MongoClient(meta_server, meta_port, username=self.mongo_user, password=self.mongo_pass)
                 mongo_meta = mongo_meta_client[meta_db]
 
             try:
@@ -758,9 +765,9 @@ class DB():
                             try:
 
                                 if not self.metadata_only:
-                                    num_inserted = self._mongo_main_add_batch(mongo_main, source_id, copy.deepcopy(batch))
+                                    num_inserted = self._mongo_main_add_batch(mongo_main, source_id, copy.deepcopy(batch), comms_queue)
                                 if self.use_metadata:
-                                    _ = self._mongo_meta_add_batch(mongo_meta, source_id, batch)
+                                    _ = self._mongo_meta_add_batch(mongo_meta, source_id, batch, comms_queue)
                                     if self.metadata_only:
                                         num_inserted = int(_)
 
@@ -782,7 +789,7 @@ class DB():
                 return
 
             except Exception as e:
-                comms_queue.put('Error in _add_batches():\n{}'.format(str(e)))
+                comms_queue.put('Error in _add_batches():\n{}'.format(str(traceback.format_exc())))
                 return
 
             finally:
@@ -801,7 +808,7 @@ class DB():
 
 
     @staticmethod
-    def _mongo_main_add_batch(_mongo, source_id, batch, max_attempts=3):
+    def _mongo_main_add_batch(_mongo, source_id, batch, comms_queue, max_attempts=3):
 
         unique_accounts = 0
         attempts_left = int(max_attempts)
@@ -826,7 +833,7 @@ class DB():
                     error += ('\n' + str(e.details)[:64])
                 except AttributeError:
                     pass
-                self.comms_queue.put(error)
+                comms_queue.put(error)
                 attempts_left -= 1
                 sleep(5)
                 continue
@@ -836,7 +843,7 @@ class DB():
 
 
     @staticmethod
-    def _mongo_meta_add_batch(_mongo, source_id, batch, max_attempts=3):
+    def _mongo_meta_add_batch(_mongo, source_id, batch, comms_queue, max_attempts=3):
 
         attempts_left = int(max_attempts)
         mongo_tags_batch = []
@@ -858,7 +865,7 @@ class DB():
                     error += ('\n' + str(e.details)[:64])
                 except AttributeError:
                     pass
-                self.comms_queue.put(error)
+                comms_queue.put(error)
                 attempts_left -= 1
                 sleep(5)
                 continue

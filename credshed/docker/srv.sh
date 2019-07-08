@@ -42,7 +42,8 @@ start_daemon()
     if ! pgrep dockerd >/dev/null
     then
         printf '[+] Starting daemon\n'
-        (sudo dockerd --log-level fatal --userns-remap "default" --data-root "$srv_dir") &
+        printf '[+] MAKE SURE you have { "userns-remap": "default" } in /etc/docker/daemon.json'
+        sudo systemctl start docker
 
         for i in $(seq 60)
         do
@@ -73,6 +74,7 @@ kill_dock()
         #stop_containers
 
         printf '[+] Killing daemon\n'
+        sudo systemctl stop docker 2>/dev/null
         sudo kill $(pgrep -x dockerd) 2>/dev/null
         while :
         do
@@ -106,7 +108,6 @@ clean()
         sleep .1
     done
 
-    sudo rm -r "$srv_dir"
     create_dirs_and_yaml
 
 }
@@ -144,17 +145,18 @@ delete_db()
 create_dirs_and_yaml()
 {
 
-    >docker-compose.yml
+    sudo rm docker-compose.yml
+    touch docker-compose.yml
 
     echo "version: '3'
 
-services:" >> docker-compose.yml
+services:" | tee -a docker-compose.yml
 
     # create YAML for primary router
     echo "
     main_router:
         image: mongo
-        command: mongos --port 27017 --configdb main_configserver/main_config0:27017 --bind_ip_all
+        command: mongos --keyFile /scripts/mongodb.key --port 27017 --configdb main_configserver/main_config0:27017 --bind_ip_all
         ports:
             - \"127.0.0.1:27000:27017\"
         volumes:
@@ -165,30 +167,33 @@ services:" >> docker-compose.yml
                 soft: 100000
                 hard: 200000
         depends_on:
-            - main_config0" >> docker-compose.yml
+            - main_config0" | tee -a docker-compose.yml
     for shard in $(seq 1 $num_shards)
     do
-        echo "            - main_shard${shard}a" >> docker-compose.yml
+        echo "            - main_shard${shard}a" | tee -a docker-compose.yml
     done
     echo "        networks:
-            - mongo_main" >> docker-compose.yml
+            - mongo_main" | tee -a docker-compose.yml
 
     # create YAML for primary config server
     echo "
     main_config0:
         image: mongo
-        command: mongod --port 27017 --configsvr --replSet main_configserver --bind_ip_all
+        command: mongod --keyFile /scripts/mongodb.key --port 27017 --configsvr --replSet main_configserver --bind_ip_all
         volumes:
             - ${mongo_script_dir}:/scripts
             - ${mongo_main_dir}/mongo_config_0:/data/configdb:delegated
+        environment:
+            - MONGO_INITDB_ROOT_USERNAME=${mongo_user}
+            - MONGO_INITDB_ROOT_PASSWORD=${mongo_pass}
         networks:
-            - mongo_main" >> docker-compose.yml
+            - mongo_main" | tee -a docker-compose.yml
 
     # create YAML for metadata router
     echo "
     meta_router:
         image: mongo
-        command: mongos --port 27017 --configdb meta_configserver/meta_config0:27017 --bind_ip_all
+        command: mongos --keyFile /scripts/mongodb.key --port 27017 --configdb meta_configserver/meta_config0:27017 --bind_ip_all
         ports:
             - \"127.0.0.1:27001:27017\"
         volumes:
@@ -199,24 +204,27 @@ services:" >> docker-compose.yml
                 soft: 100000
                 hard: 200000
         depends_on:
-            - meta_config0" >> docker-compose.yml
+            - meta_config0" | tee -a docker-compose.yml
     for shard in $(seq 1 $num_shards)
     do
-        echo "            - meta_shard${shard}a" >> docker-compose.yml
+        echo "            - meta_shard${shard}a" | tee -a docker-compose.yml
     done
     echo "        networks:
-            - mongo_meta" >> docker-compose.yml
+            - mongo_meta" | tee -a docker-compose.yml
 
     # create YAML for metadata config server
     echo "
     meta_config0:
         image: mongo
-        command: mongod --port 27017 --configsvr --replSet meta_configserver --bind_ip_all
+        command: mongod --keyFile /scripts/mongodb.key --port 27017 --configsvr --replSet meta_configserver --bind_ip_all
         volumes:
             - ${mongo_script_dir}:/scripts
             - ${mongo_meta_dir}/mongo_config_0:/data/configdb:delegated
+        environment:
+            - MONGO_INITDB_ROOT_USERNAME=${mongo_user}
+            - MONGO_INITDB_ROOT_PASSWORD=${mongo_pass}
         networks:
-            - mongo_meta" >> docker-compose.yml
+            - mongo_meta"| tee -a docker-compose.yml
 
 
     # create parent directory for primary config server
@@ -244,7 +252,7 @@ services:" >> docker-compose.yml
         echo "
     main_shard${shard}a:
         image: mongo
-        command: mongod --port 27018 --shardsvr --replSet main_shard${shard} --bind_ip_all --setParameter maxIndexBuildMemoryUsageMegabytes=2000 --setParameter diagnosticDataCollectionEnabled=false --wiredTigerCacheSizeGB 5
+        command: mongod --keyFile /scripts/mongodb.key --port 27018 --shardsvr --replSet main_shard${shard} --bind_ip_all --setParameter maxIndexBuildMemoryUsageMegabytes=2000 --setParameter diagnosticDataCollectionEnabled=false --wiredTigerCacheSizeGB 5
         volumes:
             - ${mongo_script_dir}:/scripts
             - ${dir_name}:/data/db:delegated
@@ -254,7 +262,7 @@ services:" >> docker-compose.yml
                 soft: 100000
                 hard: 200000
         networks:
-            - mongo_main" >> docker-compose.yml
+            - mongo_main" | tee -a docker-compose.yml
     done
 
 
@@ -273,7 +281,7 @@ services:" >> docker-compose.yml
         echo "
     meta_shard${shard}a:
         image: mongo
-        command: mongod --port 27018 --shardsvr --replSet meta_shard${shard} --bind_ip_all --setParameter maxIndexBuildMemoryUsageMegabytes=2000 --setParameter diagnosticDataCollectionEnabled=false --wiredTigerCacheSizeGB 5
+        command: mongod --keyFile /scripts/mongodb.key --port 27018 --shardsvr --replSet meta_shard${shard} --bind_ip_all --setParameter maxIndexBuildMemoryUsageMegabytes=2000 --setParameter diagnosticDataCollectionEnabled=false --wiredTigerCacheSizeGB 5
         volumes:
             - ${mongo_script_dir}:/scripts
             - ${dir_name}:/data/db:delegated
@@ -283,7 +291,7 @@ services:" >> docker-compose.yml
                 soft: 100000
                 hard: 200000
         networks:
-            - mongo_meta" >> docker-compose.yml
+            - mongo_meta" | tee -a docker-compose.yml
     done
 
     # set permissions for remapped docker UIDs/GIDs
@@ -295,13 +303,11 @@ services:" >> docker-compose.yml
     echo "
 networks:
     mongo_main:
-    mongo_meta:" >> docker-compose.yml
+    mongo_meta:" | tee -a docker-compose.yml
 
-
-    if [ -n "$srv_dir" -a ! -d "$srv_dir" ]
-    then
-        sudo mkdir -p "$srv_dir"
-    fi
+    # protect docker-compose.yml
+    sudo chown root:root docker-compose.yml
+    sudo chmod 600 docker-compose.yml
 
 }
 
@@ -380,6 +386,9 @@ build_mongo_scripts()
 
     sudo mkdir -p "${mongo_script_dir}" 2>/dev/null
 
+    # internal authentication key
+    openssl rand -base64 741 | sudo tee "${mongo_script_dir}/mongodb.key"
+
     build_mongo_init_scripts 'main'
     build_mongo_init_scripts 'meta'
 
@@ -393,6 +402,7 @@ build_mongo_scripts()
 
     sudo chown -R 231999:231999 "${mongo_script_dir}"
     sudo chmod -R 770 "${mongo_script_dir}"
+    sudo chmod 600 "${mongo_script_dir}/mongodb.key"
 
 }
 
@@ -402,9 +412,9 @@ init_database()
 {
 
     # intialize config server for primary database
-    docker-compose exec main_config0 sh -c "mongo --port 27017 < /scripts/init-main_configserver.js"
+    docker-compose exec main_config0 sh -c "mongo -u ${mongo_user} -p ${mongo_pass} --port 27017 < /scripts/init-main_configserver.js"
     # intialize config server for metadata database
-    docker-compose exec meta_config0 sh -c "mongo --port 27017 < /scripts/init-meta_configserver.js"
+    docker-compose exec meta_config0 sh -c "mongo -u ${mongo_user} -p ${mongo_pass} --port 27017 < /scripts/init-meta_configserver.js"
 
     # give config servers some time
     sleep 10
@@ -425,16 +435,16 @@ init_database()
     sleep 20
 
     # initialize router for primary database
-    docker-compose exec main_router sh -c "mongo --port 27017 < /scripts/init-main_router.js"
+    docker-compose exec main_router sh -c "mongo -u ${mongo_user} -p ${mongo_pass} --port 27017 < /scripts/init-main_router.js"
     # initialize router for metadata database
-    docker-compose exec meta_router sh -c "mongo --port 27017 < /scripts/init-meta_router.js"
+    docker-compose exec meta_router sh -c "mongo -u ${mongo_user} -p ${mongo_pass} --port 27017 < /scripts/init-meta_router.js"
 
     sleep 15
 
     # create primary database & collections
-    docker-compose exec main_router sh -c "mongo --port 27017 < /scripts/init-main_db.js"
+    docker-compose exec main_router sh -c "mongo -u ${mongo_user} -p ${mongo_pass} --port 27017 < /scripts/init-main_db.js"
     # create metadata database & collection
-    docker-compose exec meta_router sh -c "mongo --port 27017 < /scripts/init-meta_db.js"
+    docker-compose exec meta_router sh -c "mongo -u ${mongo_user} -p ${mongo_pass} --port 27017 < /scripts/init-meta_db.js"
 
 }
 
@@ -500,7 +510,7 @@ done
 
 if [ -n "$do_stop" ]
 then
-    docker-compose down
+    sudo docker-compose down
     # kill_dock
 fi
 
@@ -513,7 +523,7 @@ fi
 if [ -n "$do_delete" ]
 then
     # kill_dock
-    docker-compose down
+    sudo docker-compose down
     delete_db
 fi
 
@@ -532,7 +542,8 @@ fi
 if [ -n "$do_start" ]
 then
     start_daemon
-    docker-compose up -d
+    sudo docker-compose up -d
+    sleep 5
 fi
 
 if [ -n "$do_init_db" ]
