@@ -52,7 +52,7 @@ class CredShedCLI(CredShed):
             self.output = self.output.resolve()
             assert not self.output.is_dir(), 'Creation of {} is blocked'.format(self.output)
             if self.output.exists():
-                self.log.warning('[!] Overwriting {} - CTRL+C to cancel'.format(self.output))
+                self.log.warning('Overwriting {} - CTRL+C to cancel'.format(self.output))
                 sleep(5)
 
         super().__init__(unattended=unattended, metadata=metadata, metadata_only=metadata_only, deduplication=deduplication, threads=threads)

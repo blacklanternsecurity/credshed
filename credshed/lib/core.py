@@ -146,7 +146,7 @@ class CredShed():
             self.threads = 2
 
             pool = [None] * file_threads
-            self.log.info('[+] {:,} files detected, adding in parallel ({} thread(s), {} process(es) per file)'.format(len(to_add), file_threads, self.threads))
+            self.log.info('{:,} files detected, adding in parallel ({} thread(s), {} process(es) per file)'.format(len(to_add), file_threads, self.threads))
 
             try:
                 completed = 0
