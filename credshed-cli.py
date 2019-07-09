@@ -61,7 +61,7 @@ class CredShedCLI(CredShed):
             if metadata_only:
                 raise CredShedMetadataError('"metadata_only" option specified but none available')
             else:
-                self.log.warning('[*] Continuing without metadata support')
+                self.log.warning('Continuing without metadata support')
                 self.metadata=False
 
 

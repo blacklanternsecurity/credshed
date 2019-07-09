@@ -433,10 +433,15 @@ class DB():
             time_elapsed = (end_time - start_time)
 
             if self.leak_overall > 0:
-                self.log.info('Import results for "{}"'.format(leak.source.name))
-                self.log.info('   total accounts: {:,}'.format(self.leak_overall))
-                self.log.info('   unique accounts: {:,} ({:.1f}%)'.format(self.leak_unique, ((self.leak_unique/self.leak_overall)*100)))
-                self.log.info('   time elapsed: {} hours, {} minutes, {} seconds'.format(int(time_elapsed/3600), int((time_elapsed%3600)/60), int((time_elapsed%3600)%60)))
+                self.log.info('{:,}/{:,} ({:.2f}%) unique accounts in "{}".  Time elapsed: {:02d}:{:02d}:{:02d}'.format(
+                    self.leak_unique,
+                    self.leak_overall,
+                    ((self.leak_unique/self.leak_overall)*100), 
+                    leak.source.name,
+                    int(time_elapsed/3600),
+                    int((time_elapsed%3600)/60),
+                    int((time_elapsed%3600)%60)))
+
             if errors:
                 self.log.error('Errors:')
                 for e in errors:
