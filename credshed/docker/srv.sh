@@ -42,7 +42,7 @@ start_daemon()
     if ! pgrep dockerd >/dev/null
     then
         printf '[+] Starting daemon\n'
-        printf '[+] MAKE SURE you have { "userns-remap": "default" } in /etc/docker/daemon.json'
+        printf '[+] MAKE SURE you have { "userns-remap": "default" } in /etc/docker/daemon.json\n'
         sudo systemctl start docker
 
         for i in $(seq 60)
@@ -412,9 +412,9 @@ init_database()
 {
 
     # intialize config server for primary database
-    docker-compose exec main_config0 sh -c "mongo -u ${mongo_user} -p ${mongo_pass} --port 27017 < /scripts/init-main_configserver.js"
+    sudo docker-compose exec main_config0 sh -c "mongo -u ${mongo_user} -p ${mongo_pass} --port 27017 < /scripts/init-main_configserver.js"
     # intialize config server for metadata database
-    docker-compose exec meta_config0 sh -c "mongo -u ${mongo_user} -p ${mongo_pass} --port 27017 < /scripts/init-meta_configserver.js"
+    sudo docker-compose exec meta_config0 sh -c "mongo -u ${mongo_user} -p ${mongo_pass} --port 27017 < /scripts/init-meta_configserver.js"
 
     # give config servers some time
     sleep 10
@@ -422,29 +422,29 @@ init_database()
     # initialize shards for primary database
     for i in $(seq $num_shards)
     do
-        docker-compose exec "main_shard${i}a" sh -c "mongo --port 27018 < /scripts/init-main_shard${i}.js"
+        sudo docker-compose exec "main_shard${i}a" sh -c "mongo --port 27018 < /scripts/init-main_shard${i}.js"
     done
 
     # initialize shards for metadata database
     for i in $(seq $num_shards)
     do
-        docker-compose exec "meta_shard${i}a" sh -c "mongo --port 27018 < /scripts/init-meta_shard${i}.js"
+        sudo docker-compose exec "meta_shard${i}a" sh -c "mongo --port 27018 < /scripts/init-meta_shard${i}.js"
     done
 
     # give shards time to synchronize
     sleep 20
 
     # initialize router for primary database
-    docker-compose exec main_router sh -c "mongo -u ${mongo_user} -p ${mongo_pass} --port 27017 < /scripts/init-main_router.js"
+    sudo docker-compose exec main_router sh -c "mongo -u ${mongo_user} -p ${mongo_pass} --port 27017 < /scripts/init-main_router.js"
     # initialize router for metadata database
-    docker-compose exec meta_router sh -c "mongo -u ${mongo_user} -p ${mongo_pass} --port 27017 < /scripts/init-meta_router.js"
+    sudo docker-compose exec meta_router sh -c "mongo -u ${mongo_user} -p ${mongo_pass} --port 27017 < /scripts/init-meta_router.js"
 
     sleep 15
 
     # create primary database & collections
-    docker-compose exec main_router sh -c "mongo -u ${mongo_user} -p ${mongo_pass} --port 27017 < /scripts/init-main_db.js"
+    sudo docker-compose exec main_router sh -c "mongo -u ${mongo_user} -p ${mongo_pass} --port 27017 < /scripts/init-main_db.js"
     # create metadata database & collection
-    docker-compose exec meta_router sh -c "mongo -u ${mongo_user} -p ${mongo_pass} --port 27017 < /scripts/init-meta_db.js"
+    sudo docker-compose exec meta_router sh -c "mongo -u ${mongo_user} -p ${mongo_pass} --port 27017 < /scripts/init-meta_db.js"
 
 }
 
