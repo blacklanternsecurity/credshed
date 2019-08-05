@@ -32,7 +32,7 @@ log.setLevel(logging.DEBUG)
 
 # log INFO and up to stderr
 console = logging.StreamHandler()
-console.setLevel(logging.INFO)
+console.setLevel(logging.DEBUG)
 # set a format which is simpler for console use
 formatter = logging.Formatter('[%(levelname)s] %(message)s')
 # tell the handler to use this format
@@ -192,7 +192,7 @@ def main(options):
 
     except KeyboardInterrupt:
         cred_shed.STOP = True
-        errprint('\n[!] Stopping CLI\n')
+        errprint('\n[!] Stopping CLI, please wait for threads to finish\n')
         return
 
     finally:

@@ -35,7 +35,7 @@ class Account():
     # max length for hash, misc
     max_length_2 = 256
 
-    def __init__(self, email=b'', username=b'', password=b'', _hash=b'', misc=b''):
+    def __init__(self, email=b'', username=b'', password=b'', _hash=b'', misc=b'', strict=False):
 
         # abort if values are too long
         # saves the regexes from hogging CPU
@@ -62,12 +62,14 @@ class Account():
                 self.email = self.username.lower()
                 self.username = b''
 
-        else:
+        elif not strict:
             if not self.is_email(self.email):
                 #errprint('[*] Invalid email: {}'.format(self.email))
                 if not self.username:
                     # errprint('\n[+] Changing to username')
                     self.email, self.username = self.username, self.email
+        else:
+            raise AccountCreationError('Email validation failed on "{}" and strict mode is enabled.'.format(str(email)))
 
         if _hash and not password:
             self.password = _hash.strip()

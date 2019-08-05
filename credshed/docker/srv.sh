@@ -14,7 +14,7 @@ Usage: ${0##*/} [option]
     [1] prep    create docker-compose.yml & init scripts
     [2] start   start containers
     [3] init    initialize mongodb shards
-        stop    stop dockerd
+        stop    stop containers
         clean   remove artifacts such as docker containers & images
         delete  delete entire database
 
@@ -65,27 +65,18 @@ start_daemon()
 }
 
 
-
-kill_dock()
+start_containers()
 {
 
-    if pgrep -x dockerd >/dev/null
-    then
-        #stop_containers
+    sudo docker-compose up -d
 
-        printf '[+] Killing daemon\n'
-        sudo systemctl stop docker 2>/dev/null
-        sudo kill $(pgrep -x dockerd) 2>/dev/null
-        while :
-        do
-            pgrep -x dockerd >/dev/null || break
-            sleep .1
-        done
-        printf "[+] It's dead\n"
+}
 
-    else
-        printf '[i] dockerd daemon not running\n'
-    fi
+
+stop_containers()
+{
+
+    sudo docker-compose down
 
 }
 
@@ -94,21 +85,13 @@ clean()
 {
 
     start_daemon
-    sudo docker kill $(docker ps -q) >/dev/null 2>&1
-    sudo docker rm $(docker ps -a -q) >/dev/null 2>&1
-    sudo docker rmi $(docker images -q) >/dev/null 2>&1
-    docker kill $(docker ps -q) >/dev/null 2>&1
-    docker rm $(docker ps -a -q) >/dev/null 2>&1
-    docker rmi $(docker images -q) >/dev/null 2>&1
-    sudo rm /etc/subgid /etc/subuid >/dev/null 2>&1
-    kill_dock
-    while :
-    do
-        pgrep dockerd >/dev/null || break
-        sleep .1
-    done
+    stop_containers
+    sudo docker-compose rm
+    sudo docker image prune -f
+    sudo docker network prune -f
+    # sudo rm /etc/subgid /etc/subuid >/dev/null 2>&1
 
-    create_dirs_and_yaml
+    # create_dirs_and_yaml
 
 }
 
@@ -136,7 +119,7 @@ delete_db()
         fi
     done
 
-    create_dirs_and_yaml
+    # create_dirs_and_yaml
     printf '[+] Done.\n'
 
 }
@@ -484,9 +467,6 @@ do
         --stop|stop|-k|-K|--kill|kill)
             do_stop=true
             ;;
-        --purge|purge)
-            do_purge=true
-            ;;
         --shards|-n|--num-shards)
             shift
             case $1 in
@@ -510,27 +490,18 @@ done
 
 if [ -n "$do_stop" ]
 then
-    sudo docker-compose down
-    # kill_dock
+    stop_containers
 fi
 
 if [ -n "$do_clean" ]
 then
-    kill_dock
     clean
 fi
 
 if [ -n "$do_delete" ]
 then
-    # kill_dock
-    sudo docker-compose down
+    stop_containers
     delete_db
-fi
-
-if [ -n "$do_purge" ]
-then
-    kill_dock
-    clean
 fi
 
 if [ -n "$do_db_prep" ]
@@ -542,11 +513,14 @@ fi
 if [ -n "$do_start" ]
 then
     start_daemon
-    sudo docker-compose up -d
+    start_containers
     sleep 5
 fi
 
 if [ -n "$do_init_db" ]
 then
+    start_daemon
+    start_containers
+    sleep 5
     init_database
 fi

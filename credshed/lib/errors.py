@@ -21,6 +21,9 @@ class CredShedDatabaseError(CredShedError):
 class AccountCreationError(CredShedError):
     pass
 
+class LineAbsorptionError(AccountCreationError):
+    pass
+
 # QuickParse-specific
 
 class QuickParseError(CredShedError):

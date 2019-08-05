@@ -2,6 +2,7 @@
 
 # by TheTechromancer
 
+import os
 import random
 import string
 import logging
@@ -26,6 +27,9 @@ class QuickParse():
     max_line_length = 1024
 
     def __init__(self, file, source_name=None, unattended=False, threshold=.80, strict=True):
+
+        # set up logging
+        self.log = logging.getLogger('credshed.quickparse')
 
         self.file = Path(file).resolve()
 
@@ -67,9 +71,6 @@ class QuickParse():
             self.mapping = dict()
 
             self.gather_info()
-
-        # set up logging
-        self.log = logging.getLogger('credshed.quickparse')
         
 
 
@@ -84,14 +85,15 @@ class QuickParse():
         if not self.file.is_file():
             raise QuickParseError('Failure reading {}'.format(str(self.file)))
 
-        #head = [x for x in run(['head', '-n', str(int(num_lines/2)), str(self.file)], stdout=PIPE).stdout.splitlines() if x]
-        #tail = [x for x in run(['tail', '-n', str(int(num_lines/2)), str(self.file)], stdout=PIPE).stdout.splitlines() if x]
+        head = self._head(str(self.file), num_lines=int(num_lines*2))
+        # NOTE: tail has problems (both with subprocess and native python) when thread count gets too high
+        # it hangs and never returns
+        #tail = self._tail(str(self.file), num_lines=int(num_lines/2))
 
-        head = self._head(str(self.file), num_lines=int(num_lines/2))
-        tail = self._tail(str(self.file), num_lines=int(num_lines/2))
-
-        # deduplicate, just in case file is smaller than num_lines
-        all_lines = list(set(head + tail))
+        # skip the first num_lines and start in the middle of the file
+        # this avoids problems in large files which are sorted with symbols first
+        # and have a bunch of junk at the beginning
+        all_lines = head[-num_lines:]
         if not all_lines:
             raise QuickParseError('Error reading (or empty) file: {}'.format(self.file))
 
@@ -360,19 +362,28 @@ class QuickParse():
 
         line = line[:self.max_line_length]
 
-        email_match = Account.email_regex_search_bytes.search(line)
+        # try the most common email:password format
+        try:
+            email, password = self._split_line(line)
+            return Account(email=email, password=password, strict=True)
 
-        if email_match:
-            email = line[email_match.start():email_match.end()]
-            # strip out email and replace with "@"
-            line = line.replace(email, b'@')
-            if len(line) > 2:
-                # only use the last 511 characters
-                return Account(email=email, misc=line[-511:])
-            else:
-                raise AccountCreationError('Not enough content in line: {}'.format(str(line)[:64]))
+        # if that fails, ABSORB
+        except (ValueError, AccountCreationError):
 
-        raise AccountCreationError('Unable to parse line: {}'.format(str(line)[:64]))
+            email_match = Account.email_regex_search_bytes.search(line)
+
+            if email_match:
+                email = line[email_match.start():email_match.end()]
+                # strip out email and replace with "@"
+                line = line.replace(email, b'@')
+                if len(line) > 2:
+                    # only use the last 511 characters
+                    return Account(email=email, misc=line[-511:])
+                else:
+                    raise AccountCreationError('Not enough content in line: {}'.format(str(line)[:64]))
+
+        # if we got here, this line doesn't deserve to live
+        raise LineAbsorptionError('Unable to parse line: {}'.format(str(line)[:64]))
 
 
 
@@ -576,14 +587,33 @@ class QuickParse():
             return lines
 
 
-    def _tail(self, filename, num_lines=10, timeout=2):
+
+    def _tail(self, filename, num_lines=10, bufsize=8192):
+
+        lines = []
 
         try:
-            lines = sp.run(['tail', '-n', str(num_lines), str(self.file)], stdout=sp.PIPE, timeout=timeout).stdout.splitlines()
-        except sp.TimeoutExpired:
-            lines = []
 
-        return [line[0:self.max_line_length] for line in lines]
+            filesize = os.stat(filename).st_size
+            iteration = 0
+            
+            with open(filename, 'rb') as f:
+                if bufsize > filesize:
+                    bufsize = filesize-1
+                while True:
+                    iteration +=1
+                    seek_position = max(0, (filesize - (bufsize * iteration)))
+                    f.seek(seek_position)
+                    lines.extend(f.readlines())
+                    if len(lines) >= num_lines or f.tell() == 0:
+                        break
+
+        except OSError:
+            pass
+
+        finally:
+            return lines[-num_lines:]
+
 
 
     def __iter__(self):
@@ -598,8 +628,10 @@ class QuickParse():
                             yield self.translate_line(line)
                         else:
                             yield self.absorb_line(line)
+                    except LineAbsorptionError:
+                        continue
                     except AccountCreationError as e:
-                        self._adaptive_print('[!] {}'.format(str(e)))
+                        self.log.warning(str(e))
                         continue
 
         except PermissionError:

@@ -83,6 +83,7 @@ class CredShed():
         self.log.setLevel(log_level)
 
 
+
     def search(self, query, query_type='email', limit=0, verbose=False):
         '''
         query = search string(s)
@@ -112,6 +113,7 @@ class CredShed():
                 raise CredShedError('Error querying MongoDB: {}'.format(str(e)))
 
 
+
     def stats(self):
 
         return self.db.stats(accounts=True, counters=True, sources=True, db=True)
@@ -128,7 +130,7 @@ class CredShed():
             files = [files]
 
         to_add = set()
-        # get file listing for any directories
+        # get recursive file listing
         for file in files:
             if file.is_file():
                 to_add.add((file, None))
@@ -159,10 +161,8 @@ class CredShed():
                         try:
                             for i in range(len(pool)):
 
-                                t = pool[i]
-
                                 try:
-                                    if t.is_alive():
+                                    if pool[i].is_alive():
                                         continue
                                     else:
                                         completed += 1
@@ -189,19 +189,21 @@ class CredShed():
                             active_threads.append(str(t))
                     except AttributeError:
                         continue
-                self.log.info('[+] Reached end, waiting for {:,} active threads to finish'.format(len(active_threads)))
+
+                self.log.info('Reached end, waiting for {:,} active threads to finish'.format(len(active_threads)))
 
                 while not all([t is None for t in pool]):
                     for i in range(len(pool)):
-                        t = pool[i]
-                        if t is not None:
-                            if not t.is_alive():
+                        if pool[i] is not None:
+                            if not pool[i].is_alive():
                                 completed += 1
                                 time_elapsed = datetime.now() - start_time
                                 self.log.info('{:,}/{:,} ({:.1f}%) files completed in {}'.format(completed, len(to_add), (completed/len(to_add)*100), str(time_elapsed).split('.')[0]))
                                 pool[i] = None
                                 continue
-                    sleep(.1)
+                            else:
+                                self.log.debug('Waiting on thread {}'.format(pool[i].name))
+                    sleep(1)
 
             except KeyboardInterrupt:
                 self.STOP = True
@@ -271,8 +273,6 @@ class CredShed():
 
             try:
 
-                db = DB(use_metadata=self.metadata, metadata_only=self.metadata_only)
-
                 # if leak_file is None, assume leak_dir is just a standalone file
                 if dir_and_file[1] is None:
                     leak_file = dir_and_file[0]
@@ -280,6 +280,8 @@ class CredShed():
                 else:
                     leak_dir, leak_friendly_name = dir_and_file
                     leak_file = leak_dir / leak_friendly_name
+
+                db = DB(use_metadata=self.metadata, metadata_only=self.metadata_only)
 
 
                 try:
@@ -353,7 +355,7 @@ class CredShed():
                     #print('\nAdding:\n{}'.format(str(leak)))
                     #file_thread_executor.submit(db.add_leak, leak, num_threads=options.threads)
                     #self.log.info('[{}] Calling db.add_leak()'.format(dir_and_file))
-                    import_result = db.add_leak(leak, num_threads=self.threads)
+                    import_result = db.add_leak(leak, num_child_processes=self.threads)
                     #self.log.info('[{}] Finished calling db.add_leak()'.format(dir_and_file))
 
                 else:
