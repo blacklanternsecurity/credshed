@@ -634,5 +634,5 @@ class QuickParse():
                         self.log.warning(str(e))
                         continue
 
-        except PermissionError:
-            raise QuickParsePermissionError('Permission denied on {}'.format(str(self.file)))
+        except OSError:
+            raise QuickParsePermissionError('Error opening {}'.format(str(self.file)))
