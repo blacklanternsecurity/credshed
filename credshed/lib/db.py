@@ -15,7 +15,6 @@ from .errors import *
 from time import sleep
 import multiprocessing
 from pathlib import Path
-import concurrent.futures
 from datetime import datetime, timedelta
 
 

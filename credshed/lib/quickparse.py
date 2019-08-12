@@ -362,9 +362,9 @@ class QuickParse():
 
         line = line[:self.max_line_length]
 
-        # try the most common email:password format
+        # try the common email:password format
         try:
-            email, password = self._split_line(line)
+            email, password = self._split_line(line, delimiter=b':')
             return Account(email=email, password=password, strict=True)
 
         # if that fails, ABSORB
@@ -380,7 +380,7 @@ class QuickParse():
                     # only use the last 511 characters
                     return Account(email=email, misc=line[-511:])
                 else:
-                    raise AccountCreationError('Not enough content in line: {}'.format(str(line)[:64]))
+                    return Account(email=email)
 
         # if we got here, this line doesn't deserve to live
         raise LineAbsorptionError('Unable to parse line: {}'.format(str(line)[:64]))
@@ -631,7 +631,7 @@ class QuickParse():
                     except LineAbsorptionError:
                         continue
                     except AccountCreationError as e:
-                        self.log.warning(str(e))
+                        # self.log.warning(str(e))
                         continue
 
         except OSError:
