@@ -367,7 +367,7 @@ class CredShed():
                     with open(str(self.output), 'ab') as f:
                         for account in leak:
                             #self.log.info(str(account))
-                            f.write(account.to_bytes() + b'\n')
+                            f.write(account.bytes + b'\n')
                     #leak.dump()
 
             except QuickParseError as e:
