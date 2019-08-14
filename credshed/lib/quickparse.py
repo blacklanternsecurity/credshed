@@ -37,7 +37,7 @@ class QuickParse():
             self.source_name = str(file)
         else:
             self.source_name = str(source_name)
-        
+
         self.source_hashtype = ''
 
         self.output_delimiter = b'\x00'
