@@ -22,6 +22,9 @@ class DB():
 
     def __init__(self, use_metadata=True, metadata_only=False):
 
+        # set up logging
+        self.log = logging.getLogger('credshed.db')
+
         self.metadata_only = metadata_only
         self.config = self.parse_config()
 
@@ -105,9 +108,6 @@ class DB():
         self.leak_unique = 0
         self.leak_overall = 0
         self.leak_size = 0
-
-        # set up logging
-        self.log = logging.getLogger('credshed.db')
 
 
     def search(self, keywords, query_type='email', max_results=10000):

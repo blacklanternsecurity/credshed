@@ -71,7 +71,6 @@ class QuickParse():
             self.mapping = dict()
 
             self.gather_info()
-        
 
 
 
