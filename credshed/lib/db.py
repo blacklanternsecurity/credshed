@@ -3,7 +3,6 @@
 # by TheTechromancer
 
 import copy
-import time
 import queue
 import hashlib
 import logging
@@ -16,13 +15,15 @@ from .errors import *
 from time import sleep
 import multiprocessing
 from pathlib import Path
-import concurrent.futures
 from datetime import datetime, timedelta
 
 
 class DB():
 
     def __init__(self, use_metadata=True, metadata_only=False):
+
+        # set up logging
+        self.log = logging.getLogger('credshed.db')
 
         self.metadata_only = metadata_only
         self.config = self.parse_config()
@@ -107,9 +108,6 @@ class DB():
         self.leak_unique = 0
         self.leak_overall = 0
         self.leak_size = 0
-
-        # set up logging
-        self.log = logging.getLogger('credshed.db')
 
 
     def search(self, keywords, query_type='email', max_results=10000):
@@ -326,7 +324,7 @@ class DB():
         except TypeError:
             self.leak_size = 0
 
-        start_time = time.time()
+        start_time = datetime.now()
 
         try:
 
@@ -339,8 +337,8 @@ class DB():
             # update source counter
             self.counters.update_one({'collection': 'sources'}, {'$set': {str(source_id): self.leak_overall}}, upsert=True)
 
-            end_time = time.time()
-            time_elapsed = (end_time - start_time)
+            end_time = datetime.now()
+            time_elapsed = (end_time - start_time).total_seconds()
 
             if self.leak_overall > 0:
                 self.log.info('{:,}/{:,} ({:.2f}%) unique accounts in "{}".  Time elapsed: {:02d}:{:02d}:{:02d}'.format(
@@ -348,9 +346,9 @@ class DB():
                     self.leak_overall,
                     ((self.leak_unique/self.leak_overall)*100), 
                     leak.source.name,
-                    int(time_elapsed/3600),
-                    int((time_elapsed%3600)/60),
-                    int((time_elapsed%3600)%60)))
+                    int(time_elapsed // 3600),
+                    int((time_elapsed % 3600) // 60),
+                    int(time_elapsed % 60)))
 
 
         except pymongo.errors.PyMongoError as e:
@@ -375,7 +373,7 @@ class DB():
 
 
 
-    def _babysit_child_processes(self, leak, source_id, num_child_processes, process_timeout_seconds=10):
+    def _babysit_child_processes(self, leak, source_id, num_child_processes, process_timeout_seconds=300):
 
         timeout_delta = timedelta(seconds=process_timeout_seconds)
 
@@ -383,149 +381,166 @@ class DB():
         batches_remaining = True
 
         # process-specific queues for batch submission
-        batch_queues = [multiprocessing.Queue(3)] * num_child_processes
+        batch_queues = [multiprocessing.Queue(3) for i in range(num_child_processes)]
         # process-specific queues for results (e.g. number of accounts inserted)
-        result_queues = [multiprocessing.Queue(10)] * num_child_processes
+        result_queues = [multiprocessing.Queue(10) for i in range(num_child_processes)]
         # process-specific queues for communication
-        error_queues = [multiprocessing.Queue(10)] * num_child_processes
+        error_queues = [multiprocessing.Queue(10) for i in range(num_child_processes)]
         # activity timers for detecting inactive processes
-        last_active_times = [datetime.now()] * num_child_processes
+        last_active_times = [datetime.now() for i in range(num_child_processes)]
         # Process() objects
         child_processes = ['not_started'] * num_child_processes
 
-        # AND THE ROWERS KEEP ON ROWING
-        while 1:
 
-            if all([c == 'finished' for c in child_processes]):
-                self.log.info('All child processes finished for {}'.format(leak.source.name))
-
-                # close queues
-                #for q_group in [result_queues, batch_queues, error_queues]:
-                #    for q in q_group:
-                #        q.close()
+        # i know i know
+        def kill_child(_thread_id):
+            tries = 10
+            while tries > 0 and child_processes[_thread_id] is not None:
+                tries -= 1
+                try:
+                    child_processes[_thread_id].terminate()
+                    sleep(.2)
+                    child_processes[_thread_id].kill()
+                    sleep(.2)
+                    child_processes[_thread_id].close()
+                    child_processes[_thread_id] = None
+                except ValueError:
+                    # ValueError "Cannot close a process while it is still running."
+                    sleep(.1)
+                    continue
                 break
 
-            try:
-                for thread_id in range(num_child_processes):
+            # recreate the queues just to be safe?
+            # batch_queues[thread_id].close()
+            # batch_queues[thread_id] = multiprocessing.Queue(3)
+            # result_queues[thread_id].close()
+            # result_queues[thread_id] = multiprocessing.Queue(10)
+            # error_queues[thread_id].close()
+            # error_queues[thread_id] = multiprocessing.Queue(10)
 
-                    last_active = last_active_times[thread_id]
 
-                    # clear out the error queue
+        # AND THE ROWERS KEEP ON ROWING
+        while not all([c == 'finished' for c in child_processes]):
+
+            for thread_id in range(num_child_processes):
+
+                try:
+                    # send one batch
+                    temp_thread_id = copy.deepcopy(thread_id)
+                    batch = next(batch_generator)
                     while 1:
                         try:
-                            error = error_queues[thread_id].get_nowait()
-                            self.log.error(str(error))
-                        except queue.Empty:
-                            #self.log.debug('Error queue cleared for child process #{}'.format(thread_id))
+                            batch_queues[temp_thread_id].put_nowait(batch)
+                            # self.log.debug('Submitted batch to child process #{} in {}'.format(temp_thread_id, leak.source.name))
                             break
+                        except queue.Full:
+                            # self.log.debug('Batch queue full for child process #{}'.format(temp_thread_id))
+                            temp_thread_id = ((temp_thread_id + 1) % num_child_processes)
+                            sleep(.1)
 
-                    # clear out the result queue
-                    while 1:
-                        try:
-                            new_accounts = result_queues[thread_id].get_nowait()
+                except StopIteration:
+                    if batches_remaining:
+                        # self.log.debug('Reached end of batches.  Sending shutdown signals for {}'.format(leak.source.name))
 
-                            last_active_times[thread_id] = datetime.now()
+                        # we've yeeted our last batch
+                        batches_remaining = False
+                        signals_sent = set()
 
-                            if new_accounts is None:
-                                # self.log.debug('Child process #{} finished in {}'.format(thread_id, leak.source.name))
-                                # mark as finished
-                                child_processes[thread_id] = 'finished'
-                            else:
-                                self.leak_unique += new_accounts
-                                
-                        except queue.Empty:
-                            #print('threads finished: {}/{}'.format(threads_finished, num_child_processes))
-                            #print('threads alive: ' + str([p.is_alive() for p in pool]))
-                            break
-
-
-                    if child_processes[thread_id] == 'finished':
-                        continue
-
-                    else:
-
-                        idle_time = datetime.now() - last_active
-                        stalled = (idle_time > timeout_delta)
-
-                        # if process isn't started yet or if it's inactive
-                        if child_processes[thread_id] == 'not_started' or stalled:
-
-                            # just mark it as finished if there are no batches left
-                            if not batches_remaining:
-                                child_processes[thread_id] = 'finished'
-
-                            # Kill process if it's stalled
-                            elif stalled:
-
-                                self.log.warning('Child process #{} for {} stalled after {:,} seconds, restarting'.format(\
-                                    thread_id, leak.source.name, process_timeout_seconds))
-
-                                tries = 10
-                                while tries > 0:
-                                    tries -= 1
-                                    try:
-                                        child_processes[thread_id].terminate()
-                                        sleep(.2)
-                                        child_processes[thread_id].kill()
-                                        sleep(.2)
-                                        child_processes[thread_id].close()
-                                        child_processes[thread_id] = None
-                                    except ValueError:
-                                        # ValueError "Cannot close a process while it is still running."
-                                        sleep(.1)
-                                        continue
-                                    break
-
-                                # recreate the queues just to be safe
-                                batch_queues[thread_id].close()
-                                batch_queues[thread_id] = multiprocessing.Queue(3)
-                                result_queues[thread_id].close()
-                                result_queues[thread_id] = multiprocessing.Queue(10)
-                                error_queues[thread_id].close()
-                                error_queues[thread_id] = multiprocessing.Queue(10)
-
-                            # otherwise, start a new one
-                            else:
-
-                                # then start the new child process
-                                # self.log.debug('Creating new child process #{} for {}'.format(thread_id, leak.source.name))
-                                child_processes[thread_id] = multiprocessing.Process(target=self._add_batches, args=(\
-                                    batch_queues[thread_id], result_queues[thread_id], error_queues[thread_id], source_id), daemon=True)
-                                sleep(.1)
+                        # send shutdown signal to threads
+                        i = 0
+                        while len(signals_sent) < num_child_processes:
+                            if child_processes[i] in ['not_started', 'finished']:
+                                signals_sent.add(i)
+                            if i not in signals_sent:
                                 try:
-                                    # self.log.debug('Starting new child process #{}'.format(thread_id))
-                                    child_processes[thread_id].start()
-                                except AttributeError:
-                                    # AttributeError: 'NoneType' object has no attribute 'poll'
-                                    continue
-                            
-                        # send one batch
-                        temp_thread_id = int(thread_id)
-                        batch = next(batch_generator)
-                        while 1:
-                            try:
-                                batch_queues[temp_thread_id].put_nowait(batch)
-                                # self.log.debug('Submitted batch to child process #{}'.format(temp_thread_id))
-                                break
-                            except Queue.full:
-                                # self.log.debug('Batch queue full for child process #{}'.format(temp_thread_id))
-                                temp_thread_id = ((temp_thread_id + 1) % num_child_processes)
-                                # sleep for a moment every full iteration to save on CPU
-                                if temp_thread_id == 0:
+                                    batch_queues[i].put_nowait(None)
+                                    signals_sent.add(i)
+                                except (queue.Full, AssertionError):
+                                    # self.log.debug('Cannot send shutdown signal to thread #{} in {} {}'.format(thread_id, leak.source.name, str(child_processes)))
+                                    # AssertionError: Queue <multiprocessing.queues.Queue object at 0xdeadbeef> has been closed
                                     sleep(.1)
-                                continue
 
-            except StopIteration:
-                # we've yeeted our last batch
-                batches_remaining = False
+                            i = (i + 1) % num_child_processes
 
-                # send shutdown signal to threads
-                for batch_queue in batch_queues:
+                        # self.log.debug('Finished sending shutdown signals for {}'.format(leak.source.name))
+                    # else:
+                    #    self.log.debug("we're here again {} {}".format(leak.source.name, str(child_processes)))
+
+
+                # clear out the error queue
+                while 1:
                     try:
-                        batch_queue.put_nowait(None)
-                    except (queue.Full, AssertionError):
-                        # AssertionError: Queue <multiprocessing.queues.Queue object at 0xdeadbeef> has been closed
-                        continue
+                        error = error_queues[thread_id].get_nowait()
+                        self.log.error(str(error))
+                    except queue.Empty:
+                        #OSError: handle is closed
+                        #self.log.debug('Error queue cleared for child process #{}'.format(thread_id))
+                        break
+                    except OSError as e:
+                        self.log.error('OSError: {}'.format(str(e)))
+                        break
+
+                # clear out the result queue
+                while 1:
+                    try:
+                        new_accounts = result_queues[thread_id].get_nowait()
+
+                        last_active_times[thread_id] = datetime.now()
+
+                        if new_accounts is None:
+                            # self.log.debug('Child process #{} finished in {}'.format(thread_id, leak.source.name))
+                            # mark as finished
+                            child_processes[thread_id] = 'finished'
+                        else:
+                            # self.log.debug('ADD {} NEW ACCOUNTS FOR {}'.format(new_accounts, leak.source.name))
+                            self.leak_unique += new_accounts
+                            
+                    except queue.Empty:
+                        break
+                    except OSError as e:
+                        log.error('OSError: {}'.format(str(e)))
+                        break
+
+
+                if child_processes[thread_id] == 'finished':
+                    continue
+
+                else:
+
+                    idle_time = datetime.now() - last_active_times[thread_id]
+                    stalled = (idle_time > timeout_delta)
+
+                    # if process isn't started yet or if it's inactive
+                    if child_processes[thread_id] == 'not_started' or stalled:
+
+                        # just mark it as finished if there are no batches left
+                        if not batches_remaining:
+                            child_processes[thread_id] = 'finished'
+                            continue
+
+                        # Kill process if it's stalled
+                        elif stalled:
+
+                            self.log.warning('Child process #{} for {} stalled after {:,} seconds, restarting'.format(\
+                                thread_id, leak.source.name, process_timeout_seconds))
+                            kill_child(thread_id)
+
+                        # then start the new child process
+                        # self.log.debug('Creating new child process #{} for {}'.format(thread_id, leak.source.name))
+                        child_processes[thread_id] = multiprocessing.Process(target=self._add_batches, args=(\
+                            batch_queues[thread_id], result_queues[thread_id], error_queues[thread_id], source_id), daemon=True)
+                        sleep(.1)
+                        try:
+                            # self.log.debug('Starting new child process #{} for {}'.format(thread_id, leak.source.name))
+                            last_active_times[thread_id] = datetime.now()
+                            child_processes[thread_id].start()
+                        except AttributeError:
+                            # AttributeError: 'NoneType' object has no attribute 'poll'
+                            continue
+
+            sleep(.1)
+
+        # self.log.info('All child processes finished for {}'.format(leak.source.name))
 
 
 
@@ -765,7 +780,7 @@ class DB():
         try:
 
             max_attempts = 3
-            unique_accounts = 0
+            # unique_accounts = 0
 
             if not self.metadata_only:
                 main_server = self.config['MONGO PRIMARY']['server']
@@ -788,7 +803,6 @@ class DB():
                 while 1:
                     try:
                         #self.log.info('[+] Getting batch')
-                        num_inserted = 0
                         batch = batch_queue.get_nowait()
 
                         if batch is None:
@@ -814,12 +828,12 @@ class DB():
 
                             try:
 
+                                if self.use_metadata:
+                                    num_inserted = self._mongo_meta_add_batch(mongo_meta, source_id, batch, error_queue)
                                 if not self.metadata_only:
                                     num_inserted = self._mongo_main_add_batch(mongo_main, source_id, copy.deepcopy(batch), error_queue)
-                                if self.use_metadata:
-                                    _ = self._mongo_meta_add_batch(mongo_meta, source_id, batch, error_queue)
-                                    if self.metadata_only:
-                                        num_inserted = int(_)
+
+                                result_queue.put(int(num_inserted))
 
                             except pymongo.errors.PyMongoError as e:
                                 error = str(e)
@@ -828,8 +842,6 @@ class DB():
                                 except AttributeError:
                                     pass
                                 error_queue.put('Error in _add_batches():\n{}'.format(error))
-
-                            unique_accounts += num_inserted
 
                     except queue.Empty:
                         sleep(.1)
@@ -843,9 +855,14 @@ class DB():
 
             finally:
                 try:
-                    #mongo_main_client.close()
-                    #mongo_meta_client.close()
-                    result_queue.put(unique_accounts)
+                    mongo_main_client.close()
+                except:
+                    pass
+                try:
+                    mongo_meta_client.close()
+                except:
+                    pass
+                try:
                     # send signal that thread is finished
                     result_queue.put(None)
                 except:
@@ -880,7 +897,7 @@ class DB():
             except (pymongo.errors.OperationFailure, pymongo.errors.InvalidOperation) as e:
                 error = '\nError adding account batch to main DB.  Attempting to continue.\n{}'.format(str(e)[:64])
                 try:
-                    error += ('\n' + str(e.details)[:64])
+                    error += ('\n' + str(e.details)[:256])
                 except AttributeError:
                     pass
                 error_queue.put(error)
@@ -905,8 +922,9 @@ class DB():
         while attempts_left > 0:
             try:
 
-                _mongo.account_tags.bulk_write(mongo_tags_batch, ordered=False)
-                return
+                result = _mongo.account_tags.bulk_write(mongo_tags_batch, ordered=False)
+                unique_accounts = result.upserted_count
+                return unique_accounts
 
             # sleep for a bit and try again if there's an error
             except (pymongo.errors.OperationFailure, pymongo.errors.InvalidOperation) as e:

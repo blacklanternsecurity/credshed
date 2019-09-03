@@ -46,16 +46,18 @@ class CredShedCLI(CredShed):
 
     def __init__(self, output='__db__', unattended=False, metadata=True, metadata_only=False, deduplication=False, threads=2):
 
+        output = Path(output)
+
+        super().__init__(output=output, unattended=unattended, metadata=metadata, metadata_only=metadata_only, deduplication=deduplication, threads=threads)
+
         # if we're outputting to a file instead of the DB
         if not str(output) == '__db__':
             # validate output destination
-            self.output = self.output.resolve()
+            self.output = output.resolve()
             assert not self.output.is_dir(), 'Creation of {} is blocked'.format(self.output)
             if self.output.exists():
                 self.log.warning('Overwriting {} - CTRL+C to cancel'.format(self.output))
                 sleep(5)
-
-        super().__init__(unattended=unattended, metadata=metadata, metadata_only=metadata_only, deduplication=deduplication, threads=threads)
 
         if not self.db.use_metadata:
             if metadata_only:

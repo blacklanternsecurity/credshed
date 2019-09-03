@@ -43,6 +43,7 @@ start_daemon()
     then
         printf '[+] Starting daemon\n'
         printf '[+] MAKE SURE you have { "userns-remap": "default" } in /etc/docker/daemon.json\n'
+        sleep 4
         sudo systemctl start docker
 
         for i in $(seq 60)
@@ -100,7 +101,6 @@ delete_db()
 {
     to_delete=( "$mongo_main_dir" "$mongo_meta_dir" "$mongo_script_dir" )
 
-    kill_dock
     printf '\n[!] DELETING THESE DIRECTORIES - PRESS CTRL+C TO CANCEL\n\n'
     for _dir in "${to_delete[@]}"; do
         if [ -d "$_dir" ]

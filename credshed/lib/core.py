@@ -303,29 +303,32 @@ class CredShed():
 
                 leak = Leak(q.source_name, q.source_hashtype, q.source_misc)
 
-                try:
-                    # see if source already exists
-                    source_already_in_db = db.sources.find_one(leak.source.document(misc=False, date=False))
+                # if we're writing to the database, handle duplicate source
+                if self.output.name == '__db__':
 
-                    if source_already_in_db:
-                        source_id, source_name = source_already_in_db['_id'], source_already_in_db['name']
-                        if not self.unattended:
-                            answer = input('Source ID {} ({}) already exists, merge? (Y/n)'.format()) or 'y'
-                            if not answer.lower().startswith('y'):
-                                self.log.info('Skipping existing source ID {} ({})'.format(source_id, source_name))
-                                return
-                            self.log.warning('Merging {} with existing source ID {} ({})'.format(leak_file, source_id, source_name))
-
-                except pymongo.errors.PyMongoError as e:
-                    error = str(e)
                     try:
-                        error += str(e.details)
-                    except AttributeError:
-                        pass
-                    if error:
-                        self.log.error(error)
-                    self.STOP = True
-                    break
+                        # see if source already exists
+                        source_already_in_db = db.sources.find_one(leak.source.document(misc=False, date=False))
+
+                        if source_already_in_db:
+                            source_id, source_name = source_already_in_db['_id'], source_already_in_db['name']
+                            if not self.unattended:
+                                answer = input('Source ID {} ({}) already exists, merge? (Y/n)'.format(source_id, source_name)) or 'y'
+                                if not answer.lower().startswith('y'):
+                                    self.log.info('Skipping existing source ID {} ({})'.format(source_id, source_name))
+                                    return
+                                self.log.warning('Merging {} with existing source ID {} ({})'.format(leak_file, source_id, source_name))
+
+                    except pymongo.errors.PyMongoError as e:
+                        error = str(e)
+                        try:
+                            error += str(e.details)
+                        except AttributeError:
+                            pass
+                        if error:
+                            self.log.error(error)
+                        self.STOP = True
+                        break
 
                 if not self.deduplication:
                     # override set with generator
@@ -364,7 +367,7 @@ class CredShed():
                     with open(str(self.output), 'ab') as f:
                         for account in leak:
                             #self.log.info(str(account))
-                            f.write(account.to_bytes() + b'\n')
+                            f.write(account.bytes + b'\n')
                     #leak.dump()
 
             except QuickParseError as e:
