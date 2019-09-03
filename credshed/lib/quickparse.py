@@ -364,7 +364,7 @@ class QuickParse():
 
         # try the most common email:password format
         try:
-            email, password = self._split_line(line)
+            email, password = self._split_line(line, delimiter=b':')
             return Account(email=email, password=password, strict=True)
 
         # if that fails, ABSORB

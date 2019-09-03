@@ -58,18 +58,14 @@ class Account():
 
         if not self.email:
             if self.is_email(self.username):
-                # errprint('\n[+] Username "{}" is an email'.format(str(self.username)))
                 self.email = self.username.lower()
                 self.username = b''
 
-        elif not strict:
-            if not self.is_email(self.email):
-                #errprint('[*] Invalid email: {}'.format(self.email))
-                if not self.username:
-                    # errprint('\n[+] Changing to username')
+        elif not self.is_email(self.email):
+                if strict:
+                    raise AccountCreationError('Email validation failed on "{}" and strict mode is enabled.'.format(str(email)))
+                elif not self.username:
                     self.email, self.username = self.username, self.email
-        else:
-            raise AccountCreationError('Email validation failed on "{}" and strict mode is enabled.'.format(str(email)))
 
         if _hash and not password:
             self.password = _hash.strip()
