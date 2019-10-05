@@ -44,11 +44,12 @@ logging.getLogger('credshed').addHandler(console)
 
 class CredShedCLI(CredShed):
 
-    def __init__(self, output='__db__', unattended=False, metadata=True, metadata_only=False, deduplication=False, threads=2):
+    def __init__(self, output='__db__', unattended=False, metadata=True, metadata_only=False, deduplication=False, show_unique=False, threads=2):
 
         output = Path(output)
 
-        super().__init__(output=output, unattended=unattended, metadata=metadata, metadata_only=metadata_only, deduplication=deduplication, threads=threads)
+        super().__init__(output=output, unattended=unattended, metadata=metadata, \
+            metadata_only=metadata_only, deduplication=deduplication, show_unique=show_unique, threads=threads)
 
         # if we're outputting to a file instead of the DB
         if not str(output) == '__db__':
@@ -151,7 +152,7 @@ def main(options):
     try:
         cred_shed = CredShedCLI(output=options.out, unattended=options.unattended, \
             metadata=(not options.no_metadata), metadata_only=options.metadata_only, \
-            deduplication=options.deduplication, threads=options.threads)
+            deduplication=options.deduplication, show_unique=options.show_unique, threads=options.threads)
     except CredShedError as e:
         log.critical('{}: {}\n'.format(e.__class__.__name__, str(e)))
         sys.exit(1)
@@ -221,6 +222,7 @@ if __name__ == '__main__':
     parser.add_argument('-p', '--search-passwords',     action='store_true',            help='search by password')
     parser.add_argument('-m', '--search-description',   action='store_true',            help='search by description / misc')
     parser.add_argument('--threads',        type=int,   default=default_threads,        help='number of threads for import operations')
+    parser.add_argument('--show-unique',    action='store_true',                        help='show each unique imported account')
     parser.add_argument('-u', '--unattended',           action='store_true',            help='auto-detect import fields without user interaction')
     parser.add_argument('--no-metadata',                action='store_true',            help='disable metadata database')
     parser.add_argument('--metadata-only',              action='store_true',            help='when importing, only import metadata')

@@ -110,8 +110,28 @@ class DB():
         self.leak_size = 0
 
 
+
+    def find_one(self, _id):
+        '''
+        retrieves one account by id
+        '''
+
+        try:
+            return Account.from_document(self.accounts.find({'_id': _id}).next())
+        except (pymongo.errors.PyMongoError, StopIteration) as e:
+            error = str(e)
+            try:
+                error += (str(e.details))
+            except AttributeError:
+                pass
+            raise CredShedDatabaseError(error)
+
+
+
+
     def search(self, keywords, query_type='email', max_results=10000):
         '''
+        searches by keyword using regex
         ~ 2 minutes to regex-search non-indexed 100M-entry DB
         '''
 
@@ -245,7 +265,7 @@ class DB():
 
 
 
-    def add_leak(self, leak, num_child_processes=4):
+    def add_leak(self, leak, show_unique=False, num_child_processes=4):
         '''
         benchmarks for adding 1M accounts:
             (best average: ~62,500 per second)
@@ -315,24 +335,24 @@ class DB():
                 [+]    time elapsed: 51 hours, 27 minutes, 0 second
         '''
 
-
-        self.log.debug('Adding leak {}'.format(str(leak.source)))
-        self.log.debug('Using {} child processes'.format(num_child_processes))
-
         try:
             self.leak_size = len(leak)
         except TypeError:
             self.leak_size = 0
 
         start_time = datetime.now()
+        self.log.debug('Adding leak {}'.format(str(leak.source)))
 
         try:
 
             source_id = self.add_source(leak.source)
 
+            self.log.debug('Using {} child processes'.format(num_child_processes))
+
             # start the child processes
             # self.log.debug('starting _babysit_child_processes() with {} child processes'.format(num_child_processes))
-            self._babysit_child_processes(leak, source_id, num_child_processes)
+            self._babysit_child_processes(leak, source_id, num_child_processes, show_unique=show_unique)
+
 
             # update source counter
             self.counters.update_one({'collection': 'sources'}, {'$set': {str(source_id): self.leak_overall}}, upsert=True)
@@ -349,7 +369,6 @@ class DB():
                     int(time_elapsed // 3600),
                     int((time_elapsed % 3600) // 60),
                     int(time_elapsed % 60)))
-
 
         except pymongo.errors.PyMongoError as e:
             error = str(e)
@@ -373,7 +392,7 @@ class DB():
 
 
 
-    def _babysit_child_processes(self, leak, source_id, num_child_processes, process_timeout_seconds=300):
+    def _babysit_child_processes(self, leak, source_id, num_child_processes, show_unique=False, process_timeout_seconds=300):
 
         timeout_delta = timedelta(seconds=process_timeout_seconds)
 
@@ -425,6 +444,7 @@ class DB():
             for thread_id in range(num_child_processes):
 
                 try:
+                    #self.log.debug('Sending one batch')
                     # send one batch
                     temp_thread_id = copy.deepcopy(thread_id)
                     batch = next(batch_generator)
@@ -437,6 +457,7 @@ class DB():
                             # self.log.debug('Batch queue full for child process #{}'.format(temp_thread_id))
                             temp_thread_id = ((temp_thread_id + 1) % num_child_processes)
                             sleep(.1)
+                    #self.log.debug('Finished sending batch')
 
                 except StopIteration:
                     if batches_remaining:
@@ -469,6 +490,7 @@ class DB():
 
                 # clear out the error queue
                 while 1:
+                    #self.log.debug('Clearing error queue')
                     try:
                         error = error_queues[thread_id].get_nowait()
                         self.log.error(str(error))
@@ -482,18 +504,27 @@ class DB():
 
                 # clear out the result queue
                 while 1:
+                    #self.log.debug('Clearing result queue')
                     try:
-                        new_accounts = result_queues[thread_id].get_nowait()
+                        result = result_queues[thread_id].get_nowait()
 
                         last_active_times[thread_id] = datetime.now()
 
-                        if new_accounts is None:
+                        if result is None:
                             # self.log.debug('Child process #{} finished in {}'.format(thread_id, leak.source.name))
                             # mark as finished
                             child_processes[thread_id] = 'finished'
                         else:
                             # self.log.debug('ADD {} NEW ACCOUNTS FOR {}'.format(new_accounts, leak.source.name))
-                            self.leak_unique += new_accounts
+                            self.leak_unique += result.upserted_count
+                            if show_unique:
+                                for _id in result.upserted_ids.values():
+                                    try:
+                                        unique_account = self.find_one(_id)
+                                    except CredShedDatabaseError:
+                                        self.log.debug(f'Error retrieving newly-inserted account: {_id}')
+                                        continue
+                                    self.log.info(f'UNIQUE ACCOUNT: {unique_account}')
                             
                     except queue.Empty:
                         break
@@ -512,6 +543,7 @@ class DB():
 
                     # if process isn't started yet or if it's inactive
                     if child_processes[thread_id] == 'not_started' or stalled:
+                        #self.log.debug('Starting child process #{thread_id}')
 
                         # just mark it as finished if there are no batches left
                         if not batches_remaining:
@@ -759,8 +791,11 @@ class DB():
 
     def _gen_batches(self, leak, source_id, batch_size=20000):
 
+        #self.log.debug(f'Batching leak: {leak.source.name}')
+
         batch = []
         for account in leak:
+            #self.log.debug(f'Batching account: {account}')
             account_doc = account.document
 
             if account_doc is not None:
@@ -829,11 +864,11 @@ class DB():
                             try:
 
                                 if self.use_metadata:
-                                    num_inserted = self._mongo_meta_add_batch(mongo_meta, source_id, batch, error_queue)
+                                    result = self._mongo_meta_add_batch(mongo_meta, source_id, batch, error_queue)
                                 if not self.metadata_only:
-                                    num_inserted = self._mongo_main_add_batch(mongo_main, source_id, copy.deepcopy(batch), error_queue)
+                                    result = self._mongo_main_add_batch(mongo_main, source_id, copy.deepcopy(batch), error_queue)
 
-                                result_queue.put(int(num_inserted))
+                                result_queue.put(result)
 
                             except pymongo.errors.PyMongoError as e:
                                 error = str(e)
@@ -875,7 +910,7 @@ class DB():
 
 
     @staticmethod
-    def _mongo_main_add_batch(_mongo, source_id, batch, error_queue, max_attempts=3):
+    def _mongo_main_add_batch(_mongo, source_id, batch, error_queue, precise=False, max_attempts=3):
 
         unique_accounts = 0
         attempts_left = int(max_attempts)
@@ -884,14 +919,16 @@ class DB():
 
         for account_doc in batch:
             _id = account_doc.pop('_id')
-            mongo_batch.append(pymongo.UpdateOne({'_id': _id}, {'$setOnInsert': account_doc}, upsert=True))
+            if precise:
+                mongo_batch.append(pymongo.UpdateOne({'_id': _id}, {'$setOnInsert': account_doc}, upsert=True))
+            else:
+                mongo_batch.append(pymongo.UpdateOne({'_id': _id}, {'$setOnInsert': account_doc}, upsert=True))
 
         while attempts_left > 0:
             try:
 
                 result = _mongo.accounts.bulk_write(mongo_batch, ordered=False)
-                unique_accounts = result.upserted_count
-                return unique_accounts
+                return result
 
             # sleep for a bit and try again if there's an error
             except (pymongo.errors.OperationFailure, pymongo.errors.InvalidOperation) as e:
@@ -923,8 +960,7 @@ class DB():
             try:
 
                 result = _mongo.account_tags.bulk_write(mongo_tags_batch, ordered=False)
-                unique_accounts = result.upserted_count
-                return unique_accounts
+                return result
 
             # sleep for a bit and try again if there's an error
             except (pymongo.errors.OperationFailure, pymongo.errors.InvalidOperation) as e:

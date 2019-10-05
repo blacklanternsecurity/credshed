@@ -153,12 +153,11 @@ class QuickParse():
                     self.mapping[unknown_fields[0]] = self.fields['p']
                     unknown_fields = []
 
-                elif not self.unattended:
-                    # assume usernames if we already have hashes or passwords
-                    if any([x in self.mapping.values() for x in [self.fields['h'], self.fields['p']]]):
-                        self._adaptive_print('[+] Assuming usernames in column #{}'.format(unknown_fields[0]+1))
-                        self.mapping[unknown_fields[0]] = self.fields['u']
-                        unknown_fields = []
+                # assume usernames if we already have hashes or passwords
+                if any([x in self.mapping.values() for x in [self.fields['h'], self.fields['p']]]):
+                    self._adaptive_print('[+] Assuming usernames in column #{}'.format(unknown_fields[0]+1))
+                    self.mapping[unknown_fields[0]] = self.fields['u']
+                    unknown_fields = []
 
             elif not self.unattended:
                 # if we haven't mapped email or usernames yet, and there's two unknown fields
@@ -239,7 +238,7 @@ class QuickParse():
                 try:
                     translated_lines.append(str(self.translate_line(line)))
                 except AccountCreationError as e:
-                    #self._adaptive_print('[!] {}: {}'.format(str(e), str(line)))
+                    self.log.debug(str(e))
                     continue
 
             # display and confirm selection
@@ -256,14 +255,15 @@ class QuickParse():
                 #    continue
             self._adaptive_print('=' * 60)
 
+            for in_index in self.mapping:
+                for i in self.fields.items():
+                    if self.mapping[in_index] == i[1]:
+                        self._adaptive_print('Column #{} -> {}'.format(in_index+1, i[0]))
+
             if self.unattended:
                 self._adaptive_print('[+] Unattended parsing of {} was successful\n'.format(self.file))
                 self.info_gathered = True
             else:
-                for in_index in self.mapping:
-                    for i in self.fields.items():
-                        if self.mapping[in_index] == i[1]:
-                            self._adaptive_print('Column #{} -> {}'.format(in_index+1, i[0]))
                 if not input('\nOK? [Y/n] ').lower().startswith('n'):
                     self.info_gathered = True
                 else:
@@ -341,13 +341,13 @@ class QuickParse():
                     #else:
                     line_new[self.mapping[p]] = line_old[p]
                 except IndexError:
-                    raise AccountCreationError('Index {} does not exist in {}'.format(p, str(line)[:64]))
+                    raise AccountCreationError('Index {} does not exist in {}'.format(p, str(line)[:80]))
 
 
             email, username, password, _hash, misc = line_new
             return Account(email, username, password, _hash, misc)
 
-        except AccountCreationError:
+        except AccountCreationError as e:
             return self.absorb_line(line)
 
 
@@ -367,7 +367,8 @@ class QuickParse():
             return Account(email=email, password=password, strict=True)
 
         # if that fails, ABSORB
-        except (ValueError, AccountCreationError):
+        except (ValueError, AccountCreationError) as e:
+            self.log.debug(str(e))
 
             email_match = Account.email_regex_search_bytes.search(line)
 
@@ -382,7 +383,7 @@ class QuickParse():
                     return Account(email=email)
 
         # if we got here, this line doesn't deserve to live
-        raise LineAbsorptionError('Unable to parse line: {}'.format(str(line)[:64]))
+        raise LineAbsorptionError('Unable to parse line: {}'.format(str(line)[:80]))
 
 
 
@@ -563,7 +564,9 @@ class QuickParse():
         prints if self.unattended is False
         '''
         s = [str(_) for _ in s]
-        if not self.unattended:
+        if self.unattended:
+            self.log.debug(' '.join(s))
+        else:
             sys.stderr.write(' '.join(s) + end)
 
 

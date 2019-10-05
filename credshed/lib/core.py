@@ -45,11 +45,12 @@ def number_range(s):
 
 class CredShed():
 
-    def __init__(self, output='__db__', unattended=False, metadata=None, metadata_only=False, deduplication=False, threads=2):
+    def __init__(self, output='__db__', unattended=False, metadata=None, metadata_only=False, deduplication=False, show_unique=False, threads=2):
 
         # if metadata = None, 
         self.metadata = metadata
         self.metadata_only = metadata_only
+        self.show_unique = show_unique
 
         try:
             self.db = DB(use_metadata=metadata, metadata_only=metadata_only)
@@ -358,7 +359,7 @@ class CredShed():
                     #print('\nAdding:\n{}'.format(str(leak)))
                     #file_thread_executor.submit(db.add_leak, leak, num_threads=options.threads)
                     #self.log.info('[{}] Calling db.add_leak()'.format(dir_and_file))
-                    import_result = db.add_leak(leak, num_child_processes=self.threads)
+                    import_result = db.add_leak(leak, num_child_processes=self.threads, show_unique=self.show_unique)
                     #self.log.info('[{}] Finished calling db.add_leak()'.format(dir_and_file))
 
                 else:

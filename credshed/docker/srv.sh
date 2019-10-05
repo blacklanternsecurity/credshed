@@ -9,6 +9,8 @@ usage()
     cat <<EOF
 Usage: ${0##*/} [option]
 
+  MAKE SURE you have { "userns-remap": "default" } in /etc/docker/daemon.json
+
   Options:
 
     [1] prep    create docker-compose.yml & init scripts
@@ -471,7 +473,7 @@ do
             shift
             case $1 in
                 ''|*[!0-9]*)
-                    echo "[!] Invalid number of shards" 
+                    printf "[!] Invalid number of shards\n"
                     exit 2
                     ;;
                 *) num_shards=$1
