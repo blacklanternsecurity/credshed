@@ -154,7 +154,7 @@ class QuickParse():
                     unknown_fields = []
 
                 # assume usernames if we already have hashes or passwords
-                if any([x in self.mapping.values() for x in [self.fields['h'], self.fields['p']]]):
+                elif any([x in self.mapping.values() for x in [self.fields['h'], self.fields['p']]]):
                     self._adaptive_print('[+] Assuming usernames in column #{}'.format(unknown_fields[0]+1))
                     self.mapping[unknown_fields[0]] = self.fields['u']
                     unknown_fields = []
