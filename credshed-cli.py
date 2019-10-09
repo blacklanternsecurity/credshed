@@ -4,10 +4,6 @@
 
 '''
 TODO:
-    - logging
-    - mongodb auth
-    - allow imports to primary / metadata servers independently
-        - try to connect to metadata server and if it doesn't respond, EYTONY NO PROOOBLEMMMM
     - when importing, prompt user for confirmation (with first / last 10 files and total count)
     - performance benchmarks (4x 500GB Samsung SSDs in LVM RAID 0):
         - 4 shards:

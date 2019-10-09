@@ -20,11 +20,11 @@ class Account():
 
     valid_email_chars = b'abcdefghijklmnopqrstuvwxyz0123456789-_.+@'
     # for checking if string is an email
-    email_regex = re.compile(r'^([a-zA-Z0-9_\-\.\+]+)@([a-zA-Z0-9_\-\.]+)\.([a-zA-Z]{2,8})$')
+    email_regex = re.compile(r'^([A-Z0-9_\-\.\+]+)@([A-Z0-9_\-\.]+)\.([A-Z]{2,8})$', re.I)
     # same thing but for raw bytes
-    email_regex_bytes = re.compile(rb'^([a-zA-Z0-9_\-\.\+]+)@([a-zA-Z0-9_\-\.]+)\.([a-zA-Z]{2,8})$')
+    email_regex_bytes = re.compile(rb'^([A-Z0-9_\-\.\+]+)@([A-Z0-9_\-\.]+)\.([A-Z]{2,8})$', re.I)
     # for searching for email in string
-    email_regex_search_bytes = re.compile(rb'([a-zA-Z0-9_\-\.\+]+)@([a-zA-Z0-9_\-\.]+)\.([a-zA-Z]{2,8})')
+    email_regex_search_bytes = re.compile(rb'([A-Z0-9_\-\.\+]+)@([A-Z0-9_\-\.]+)\.([A-Z]{2,8})', re.I)
     # less-strict version
     fuzzy_email_regex = re.compile(r'^(.+)@(.+)\.(.+)')
     # same thing but for raw bytes
