@@ -127,17 +127,23 @@ class CredShed():
         '''
 
         # make sure "files" is an iterable
-        if type(files) == str or type(files) == Path:
-            files = [files]
+        if type(files) == str:
+            files = [Path(files)]
+        else:
+            try:
+                list(files)
+            except TypeError:
+                files = [files]
 
         to_add = set()
-        # get recursive file listing
         for file in files:
             if file.is_file():
                 to_add.add((file, None))
             elif file.is_dir():
+                # get recursive file listing
                 to_add.update(set(self._get_leak_files(file)))
             else:
+                self.log.warning(f'Invalid file/directory to import: {file}')
                 continue
 
         # if we're importing a lot of files, parallelize
@@ -173,7 +179,7 @@ class CredShed():
                                 except AttributeError:
                                     pass
                                     
-                                pool[i] = threading.Thread(target=self._add_by_file, name=str(l[1]), args=(l,))
+                                pool[i] = threading.Thread(target=self._add_by_file, name=str(l[0]), args=(l,))
                                 pool[i].start()
                                 # break out of infinite loop
                                 assert False
@@ -230,19 +236,20 @@ class CredShed():
             '''
 
         else:
-            self.log.info('[+] {:,} files detected, importing using {} threads'.format(len(to_add), self.threads))
+            self.log.info(f'{len(to_add):,} files detected, importing using {self.threads:,} threads')
+            completed = 0
 
             for l in to_add:
-                completed = 0
                 start_time = datetime.now()
 
                 file, _dir = l
-                self.log.info('[+] Importing {}'.format(file))
+                self.log.info(f'Importing {file}')
     
                 self._add_by_file(l)
+                completed += 1
 
                 time_elapsed = datetime.now() - start_time
-                self.log.info('>> {:,}/{:,} ({:.1f}%) files completed in {} <<'.format(completed, len(to_add), (completed/len(to_add)*100), str(time_elapsed).split('.')[0]))
+                self.log.info('{:,}/{:,} ({:.1f}%) files completed in {}'.format(completed, len(to_add), (completed/len(to_add)*100), str(time_elapsed).split('.')[0]))
 
 
         if self.unattended and self.errors:
@@ -277,6 +284,7 @@ class CredShed():
                 # if leak_file is None, assume leak_dir is just a standalone file
                 if dir_and_file[1] is None:
                     leak_file = dir_and_file[0]
+                    # keep first parent directory only
                     leak_friendly_name = leak_file.name
                 else:
                     leak_dir, leak_friendly_name = dir_and_file

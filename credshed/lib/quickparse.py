@@ -368,7 +368,7 @@ class QuickParse():
 
         # if that fails, ABSORB
         except (ValueError, AccountCreationError) as e:
-            self.log.debug(str(e))
+            #self.log.debug(str(e))
 
             email_match = Account.email_regex_search_bytes.search(line)
 

@@ -1,5 +1,5 @@
 [Unit]
-Description=CredShed MongoDB
+Description=CredShed Database
 Requires=docker.service
 After=docker.service
 

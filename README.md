@@ -1,10 +1,11 @@
-# credshed
-A full-featured solution for injesting, organizing, storing, and querying public leaks.  Injests gigantic files or entire directories with ease.  (For funzies, try giving it your `/etc` directory and watch it pull out every single email address!)
+# c r e d s h e d
+A full-featured solution for injesting, organizing, storing, and querying public credential leaks.  Injests gigantic files or entire directories with ease.  (For funzies, try giving it your `/etc` directory and watch it pull out every single email address!)
+Includes native Pastebin-scraping functionality!
 
 ![credshed-gui-screenshot](https://user-images.githubusercontent.com/20261699/60762868-33d44580-a02e-11e9-8294-200c711328f5.png)
 [credshed-gui web front-end](https://github.com/blacklanternsecurity/credshed-gui)
 
-## Usage
+## CLI Usage
 ~~~
 $ ./credshed-cli.py --help
 usage: credshed-cli.py [-h] [-q QUERY_TYPE] [-a ADD [ADD ...]] [-t] [-o OUT]
@@ -109,11 +110,50 @@ $ ./credshed-cli.py test@example.com
 7. (Optional) Set the database to start automatically:
   - First stop any running instances
   - Edit `WorkingDirectory` in `credshed/docker/credshed.service` to match the directory where it is installed
+  - Install, enable, and start the credshed systemd service
 ~~~
 $ sudo cp credshed/docker/credshed.service /etc/systemd/system/
-$ sudo systemctl enable credshed.service
-$ sudo systemctl start credshed.service
+$ sudo systemctl enable credshed.service --now
 # check on its status
 $ journalctl -xefu credshed.service
 ~~~
 8. (Optional) If you want to enable logging, create the directory `/var/log/credshed` and make sure whichever user is running `credshed-cli.py` has write access
+9. (Optional) Set up Pastebin scraping
+  - Visit https://pastebin.com/doc_scraping_api and whitelist your IP address. (the scraping code does not need your API key)
+  - Run the script to make sure it works
+~~~
+$ ./pastebin-scaper.py
+INFO] Retrieving 100 newest pastes
+[DEBUG] Fetching https://scrape.pastebin.com/api_scrape_item.php?i=1a2b3c4d
+...
+~~~
+  - Edit `WorkingDirectory` in `credshed/docker/pastebin-scraper.service` to match the directory where it is installed
+  - Change `User` in `credshed/docker/pastebin-scraper.service` to a low-privileged user (for security)
+  - Install, enable, and start the pastebin-scraper systemd service
+~~~
+$ sudo cp credshed/docker/pastebin-scraper.service /etc/systemd/system/
+$ sudo systemctl enable pastebin-scraper.service --now
+# check on its status
+$ journalctl -xefu pastebin-scraper.service
+~~~
+  - NOTE: interesting pastes will also be saved to the current working directory unless the `--dont-save` option is specified
+
+## Pastebin Scraper Usage
+~~~
+$ ./pastebin-scraper.py --help
+usage: pastebin-scraper.py [-h] [-d LOOP_DELAY] [-s SCRAPE_LIMIT]
+                           [--save-dir SAVE_DIR] [--dont-save] [--no-metadata]
+                           [--metadata-only]
+
+optional arguments:
+  -h, --help            show this help message and exit
+  -d LOOP_DELAY, --loop-delay LOOP_DELAY
+                        seconds between API queries (default 60)
+  -s SCRAPE_LIMIT, --scrape-limit SCRAPE_LIMIT
+                        max pastes to scrape at once (default 100)
+  --save-dir SAVE_DIR   save pastes as files here (default
+                        /opt/credshed)
+  --dont-save           don't write pastes to file
+  --no-metadata         disable metadata database
+  --metadata-only       when importing, only import metadata
+~~~
