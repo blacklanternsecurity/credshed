@@ -1,6 +1,6 @@
 # c r e d s h e d
 A full-featured solution for injesting, organizing, storing, and querying public credential leaks.  Injests gigantic files or entire directories with ease.  (For funzies, try giving it your `/etc` directory and watch it pull out every single email address!)
-Includes native Pastebin-scraping functionality!
+Includes native Pastebin-scraping functionality.
 
 ![credshed-gui-screenshot](https://user-images.githubusercontent.com/20261699/60762868-33d44580-a02e-11e9-8294-200c711328f5.png)
 [credshed-gui web front-end](https://github.com/blacklanternsecurity/credshed-gui)
