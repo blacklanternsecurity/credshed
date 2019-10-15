@@ -674,6 +674,7 @@ class DB():
                 sources_stats = dict()
 
                 # temporary code to move source counters into sources collection
+                '''
                 counters = self.main_db.counters.find({})[0]
                 for source_id, source_size in counters.items():
                     try:
@@ -682,12 +683,19 @@ class DB():
                     except ValueError:
                         continue
                     self.sources.update_one({'_id': source_id}, {'$set': {'size': source_size}})
+                '''
 
 
                 for s in self.sources.find({}):
                     source_id = s.pop('_id')
                     try:
-                        sources_stats[source_id] = Source(**s)
+                        sources_stats[source_id] = Source(
+                            name=s['name'],
+                            date=s['date'],
+                            misc=s['misc'],
+                            size=s['size'],
+                            hashtype=s['hashtype']
+                        )
                     except TypeError as e:
                         self.log.error(f'Error fetching source ID {source_id}: {e}')
 

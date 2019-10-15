@@ -224,20 +224,21 @@ class Pastebin():
         for day in range(days):
             date = datetime.now() - timedelta(days=day)
             date = date.isoformat(timespec='hours').split('T')[0]
-            report_filename = str(self.save_dir / f'{date}_pastebin_unique_accounts.txt')
-            try:
-                leak = Leak()
-                leak.read(report_filename, strict=False, unattended=True)
-                for account in leak:
-                    domain = account.email.split(b'@')[-1].decode()
-                    try:
-                        domains[domain] += 1
-                    except KeyError:
-                        domains[domain] = 1
+            report_filename = Path(self.save_dir / f'{date}_pastebin_unique_accounts.txt')
+            if report_filename.is_file():
+                try:
+                    leak = Leak()
+                    leak.read(report_filename, strict=False, unattended=True)
+                    for account in leak:
+                        domain = account.email.split(b'@')[-1].decode()
+                        try:
+                            domains[domain] += 1
+                        except KeyError:
+                            domains[domain] = 1
 
-            except QuickParseError as e:
-                log.error(str(e))
-                continue
+                except QuickParseError as e:
+                    log.error(str(e))
+                    continue
 
         domains = list(domains.items())
         domains.sort(key=lambda x: x[-1], reverse=True)
