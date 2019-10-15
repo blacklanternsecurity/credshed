@@ -394,7 +394,7 @@ class DB():
 
 
 
-    def _babysit_child_processes(self, leak, source_id, num_child_processes, process_timeout_seconds=300):
+    def _babysit_child_processes(self, leak, source_id, num_child_processes, process_timeout_seconds=600):
 
         timeout_delta = timedelta(seconds=process_timeout_seconds)
 
@@ -988,5 +988,3 @@ class DB():
                 continue
 
         raise CredShedDatabaseError('\nFailed to add batch to meta DB after {} tries'.format(max_attempts))
-
-

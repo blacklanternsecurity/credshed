@@ -309,7 +309,6 @@ class CredShed():
 
                 # if we're writing to the database, handle duplicate source
                 if self.output.name == '__db__':
-
                     try:
                         # see if source already exists
                         source_already_in_db = db.sources.find_one(leak.source.document(misc=False, date=False))
@@ -439,7 +438,6 @@ class CredShed():
             for dir_name, dir_list, file_list in os.walk(d):
                 for file in file_list:
                     yield (d.parent, (Path(dir_name) / file).relative_to(d.parent))
-
 
 
     def _tail_unique_account_queue(self, quiet=False):
