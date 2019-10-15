@@ -3,19 +3,16 @@
 # by TheTechromancer
 
 import os
-import queue
-import random
 import logging
 import threading
 from .db import DB
 from .leak import *
 from .errors import *
-from math import sqrt
 import pymongo.errors
 from time import sleep
+from queue import Queue
 from .quickparse import *
 from datetime import datetime
-from multiprocessing import cpu_count
 
 
 
@@ -45,12 +42,12 @@ def number_range(s):
 
 class CredShed():
 
-    def __init__(self, output='__db__', unattended=False, metadata=None, metadata_only=False, deduplication=False, show_unique=False, threads=2):
+    def __init__(self, output='__db__', unattended=False, metadata=None, metadata_only=False, deduplication=False, threads=2):
 
         # if metadata = None, 
         self.metadata = metadata
         self.metadata_only = metadata_only
-        self.show_unique = show_unique
+        self.unique_account_queue = Queue()
 
         try:
             self.db = DB(use_metadata=metadata, metadata_only=metadata_only)
@@ -117,13 +114,15 @@ class CredShed():
 
     def stats(self):
 
-        return self.db.stats(accounts=True, counters=True, sources=True, db=True)
+        return self.db.stats(accounts=True, sources=True, db=True)
 
 
 
-    def import_files(self, files):
+    def import_files(self, files, show_unique=True, quiet=False):
         '''
         takes a single file or directory, or a list of files/directories to import
+        show_unique - auto-empty the unique_account_queue
+        quiet - don't display unique accounts
         '''
 
         # make sure "files" is an iterable
@@ -156,6 +155,10 @@ class CredShed():
 
             pool = [None] * file_threads
             self.log.info('{:,} files detected, adding in parallel ({} thread(s), {} process(es) per file)'.format(len(to_add), file_threads, self.threads))
+
+            # print unique accounts if requested
+            if show_unique:
+                threading.Thread(target=self._tail_unique_account_queue, args=(quiet,), daemon=True).start()
 
             try:
                 completed = 0
@@ -290,18 +293,10 @@ class CredShed():
                     leak_dir, leak_friendly_name = dir_and_file
                     leak_file = leak_dir / leak_friendly_name
 
-                db = DB(use_metadata=self.metadata, metadata_only=self.metadata_only)
-
-
                 try:
-                    q = QuickParse(file=leak_file, source_name=leak_friendly_name, unattended=self.unattended, strict=True)
 
-                except QuickParseError as e:
-                    self.log.warning('{}'.format(str(e)))
-                    self.log.warning('{} falling back to non-strict mode'.format(leak_file))
-                    q = QuickParse(file=leak_file, source_name=leak_friendly_name, unattended=self.unattended, strict=False)
-                    #self.errors.append(e)
-                    #self.errors.append(e2)
+                    db = DB(use_metadata=self.metadata, metadata_only=self.metadata_only)
+                    q = QuickParse(file=leak_file, source_name=leak_friendly_name, unattended=self.unattended)
 
                 except KeyboardInterrupt:
                     if self.unattended:
@@ -367,7 +362,9 @@ class CredShed():
                     #print('\nAdding:\n{}'.format(str(leak)))
                     #file_thread_executor.submit(db.add_leak, leak, num_threads=options.threads)
                     #self.log.info('[{}] Calling db.add_leak()'.format(dir_and_file))
-                    import_result = db.add_leak(leak, num_child_processes=self.threads, show_unique=self.show_unique)
+                    for unique_account in db.add_leak(leak, num_child_processes=self.threads):
+                        #self.log.debug(f'Queueing account {unique_account}')
+                        self.unique_account_queue.put(unique_account)
                     #self.log.info('[{}] Finished calling db.add_leak()'.format(dir_and_file))
 
                 else:
@@ -387,6 +384,9 @@ class CredShed():
                 self.log.error(str(e))
                 max_tries -= 1
                 continue
+
+            except AssertionError as e:
+                break
 
             finally:
                 try:
@@ -439,3 +439,14 @@ class CredShed():
             for dir_name, dir_list, file_list in os.walk(d):
                 for file in file_list:
                     yield (d.parent, (Path(dir_name) / file).relative_to(d.parent))
+
+
+
+    def _tail_unique_account_queue(self, quiet=False):
+
+        while not self.STOP:
+            try:
+                if not quiet:
+                    self.log.info(f'UNIQUE ACCOUNT: {self.unique_account_queue.get_nowait()}')
+            except queue.Empty:
+                sleep(.1)

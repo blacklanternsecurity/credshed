@@ -136,7 +136,7 @@ class Account():
 
 
     @classmethod
-    def from_document(self, document):
+    def from_document(cls, document):
 
         try:
             email = (document['email'] + '@' + document['_id'].split('|')[0][::-1]).encode(encoding='utf-8')
@@ -144,42 +144,42 @@ class Account():
             email = b''
         except UnicodeEncodeError:
             email = str(email)[2:-1] + b'@' + str(domain[::-1])[2:-1]
-        except ValueError:
-            raise AccountCreationError('Unable to determine domain from _id {}'.format(str(document['_id'])))
-        username = self._if_key_exists(document, 'username')
-        password = self._if_key_exists(document, 'password')
-        misc = self._if_key_exists(document, 'misc')
+        except (ValueError, TypeError):
+            raise AccountCreationError(f'Unable to create account from document {document}')
+        username = cls._if_key_exists(document, 'username')
+        password = cls._if_key_exists(document, 'password')
+        misc = cls._if_key_exists(document, 'misc')
         return Account(email=email, username=username, password=password, misc=misc)
 
 
     @classmethod
-    def is_email(self, email):
+    def is_email(cls, email):
 
         # abort if value is too long
-        if len(email) > self.max_length_1:
+        if len(email) > cls.max_length_1:
             return False
 
         try:
-            if self.email_regex.match(email):
+            if cls.email_regex.match(email):
                 return True
         except TypeError:
-            if self.email_regex_bytes.match(email):
+            if cls.email_regex_bytes.match(email):
                 return True
 
         return False
 
 
     @classmethod
-    def is_fuzzy_email(self, email):
+    def is_fuzzy_email(cls, email):
 
         if len(email) > 128:
             return False
 
         try:
-            if self.fuzzy_email_regex.match(email):
+            if cls.fuzzy_email_regex.match(email):
                 return True
         except TypeError:
-            if self.fuzzy_email_regex_bytes.match(email):
+            if cls.fuzzy_email_regex_bytes.match(email):
                 return True
 
         return False
@@ -250,11 +250,12 @@ class Account():
 
 class Source():
 
-    def __init__(self, name, hashtype='', misc='', date=None):
+    def __init__(self, name, hashtype='', misc='', date=None, size=0):
 
         self.name       = name
         self.hashtype   = hashtype.upper()
         self.misc       = misc
+        self.size       = size
         if date is None:
             self.date   = datetime.now()
         elif not type(date) == datetime:
@@ -268,6 +269,7 @@ class Source():
         doc = dict()
 
         doc['name'] = self.name
+        doc['size'] = self.size
         doc['hashtype'] = self.hashtype
         if misc:
             doc['misc'] = self.misc
@@ -277,6 +279,16 @@ class Source():
         return doc
 
 
+    @classmethod
+    def from_document(cls, document):
+
+        try:
+            document.pop('_id')
+        except KeyError:
+            pass
+        return cls(**document)
+
+
     def __eq__(self, other):
 
         return (self.name == other.name) and (self.hashtype == other.hashtype)
@@ -284,7 +296,7 @@ class Source():
 
     def __str__(self):
 
-        return '{}, {}{}'.format(self.name, self.hashtype, (' ({})'.format(self.misc) if self.misc else ''))
+        return f'{self.size:<15,.0f}{self.name}, {self.hashtype}{(f" ({self.misc})" if self.misc else "")}'
 
 
 
@@ -318,13 +330,10 @@ class AccountMetadata():
 
 class Leak():
 
-    def __init__(self, source_name='unknown', source_hashtype='', source_misc='', file=None):
+    def __init__(self, source_name='unknown', source_hashtype='', source_misc=''):
 
         self.source         = Source(source_name, source_hashtype, source_misc)
         self.accounts       = set()
-
-        if file:
-            self.read(file)
 
 
     def add_account(self, *args, **kwargs):
@@ -375,9 +384,11 @@ class Leak():
             sys.stdout.buffer.write(account.bytes + b'\n')
 
 
-    def read(self, file):
+    def read(self, file, unattended=False, strict=False):
 
-        q = QuickParse(file)
+        from .quickparse import QuickParse
+
+        q = QuickParse(file, unattended=unattended)
         self.source.name = q.source_name
         self.source.hashtype = q.source_hashtype
         for account in q:

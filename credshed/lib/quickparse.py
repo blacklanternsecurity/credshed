@@ -16,8 +16,6 @@ from datetime import datetime
 from statistics import mode, StatisticsError
 
 
-
-
 class QuickParse():
     '''
     takes a filename
@@ -26,7 +24,7 @@ class QuickParse():
 
     max_line_length = 1024
 
-    def __init__(self, file, source_name=None, unattended=False, threshold=.80, strict=True):
+    def __init__(self, file, source_name=None, unattended=False, threshold=.80):
 
         # set up logging
         self.log = logging.getLogger('credshed.quickparse')
@@ -42,35 +40,40 @@ class QuickParse():
 
         self.output_delimiter = b'\x00'
         self.input_delimiter = b':'
-        self.num_input_fields = 2    # number of input fields, for edge case where password contains delimiter character
-        self.password_field = 1      # used in combination with num_input_fields
-        self.unattended = unattended # whether to parse files automatically
-        self.threshold = threshold   # this percentage of lines must comply to detected format
+        self.num_input_fields = 2       # number of input fields, for edge case where password contains delimiter character
+        self.password_field = 1         # used in combination with num_input_fields
+        self.unattended = unattended    # whether to parse files automatically
+        self.strict = True              # whether to detect individual columns or just straight absorb
+        self.threshold = threshold      # this percentage of lines must comply to detected format
 
         # gather information about source
         self.gather_source_info(file)
 
-        self.strict = strict
-
-        if not self.strict:
-            self.info_gathered = True
-
-        else:
-            self.info_gathered = False
+        # try and run the detection algorithm to see what's in each column
+        try:
+            self.columns_mapped = False
 
             # email:username:password:misc
             self.fields = {
                 'e': 0, # email
                 'u': 1, # username
                 'p': 2, # password
-                'h': 3, # hash
-                'm': 4  # misc
+                'h': 2, # hash
+                'm': 3  # misc
             }
 
             # input_position --> output_position
             self.mapping = dict()
 
             self.gather_info()
+
+        # if that fails, just a b s o r b
+        except QuickParseError as e:
+            self.log.warning(str(e))
+            self.log.warning(f'{self.source_name} falling back to non-strict mode')
+            self.strict = False
+            self.columns_mapped = True
+            
 
 
 
@@ -129,8 +132,6 @@ class QuickParse():
             self.mapping[1] = self.fields['u']
             self.mapping[2] = self.fields['p']
             self.mapping[3] = self.fields['m']
-            self.input_delimiter = b'\x00'
-            self.num_input_fields = 4
             
 
         # detect what type of data is in each field
@@ -161,6 +162,7 @@ class QuickParse():
 
             elif not self.unattended:
                 # if we haven't mapped email or usernames yet, and there's two unknown fields
+                # assume usernames and passwords
                 if len(unknown_fields) == 2 and not any([x in self.mapping.values() for x in [self.fields['e'], self.fields['u']]]):
                     self.password_field = unknown_fields[1]
                     self._adaptive_print('[+] Assuming usernames in column #{}'.format(unknown_fields[0]+1))
@@ -176,7 +178,7 @@ class QuickParse():
 
 
         # ask for help
-        while not self.info_gathered == True:
+        while not self.columns_mapped == True:
             for i in unknown_fields:
                 column = columns[i]
                 if all([field == '' for field in column]):
@@ -202,7 +204,7 @@ class QuickParse():
 
                 #        self.password_field = i
                 #        self.mapping[i] = self.fields['p']
-                #        self.info_gathered = True
+                #        self.columns_mapped = True
                 #        break
 
                 if self.unattended:
@@ -256,16 +258,16 @@ class QuickParse():
             self._adaptive_print('=' * 60)
 
             for in_index in self.mapping:
-                for i in self.fields.items():
-                    if self.mapping[in_index] == i[1]:
-                        self._adaptive_print('Column #{} -> {}'.format(in_index+1, i[0]))
+                for fieldname, position in self.fields.items():
+                    if self.mapping[in_index] == position:
+                        self._adaptive_print('Column #{} -> {}'.format(in_index+1, fieldname))
 
             if self.unattended:
-                self._adaptive_print('[+] Unattended parsing of {} was successful\n'.format(self.file))
-                self.info_gathered = True
+                self._adaptive_print(f'[+] Unattended parsing of {self.file} was successful')
+                self.columns_mapped = True
             else:
                 if not input('\nOK? [Y/n] ').lower().startswith('n'):
-                    self.info_gathered = True
+                    self.columns_mapped = True
                 else:
                     self.mapping.clear()
                     unknown_fields = list(range(self.num_input_fields))
@@ -275,10 +277,10 @@ class QuickParse():
     def gather_source_info(self, file):
         
         if self.unattended:
-            self.source_misc = 'Unattended import at ' + datetime.now().isoformat(timespec='milliseconds')
+            self.source_misc = f'Unattended import at {datetime.now().isoformat(timespec="milliseconds")}'
         else:
             try:
-                self.source_misc = 'Manual import at ' + datetime.now().isoformat(timespec='milliseconds')
+                self.source_misc = f'Manual import at {datetime.now().isoformat(timespec="milliseconds")}'
                 self.source_name = self.file.stem.split('-')[0]
                 self.source_hashtype = self.file.stem.split('-')[1].upper()
 
@@ -620,7 +622,7 @@ class QuickParse():
 
     def __iter__(self):
 
-        #assert self.info_gathered, 'Run .gather_info() first'
+        #assert self.columns_mapped, 'Run .gather_info() first'
         try:
             with open(str(self.file), 'rb') as f:
                 for line in f:

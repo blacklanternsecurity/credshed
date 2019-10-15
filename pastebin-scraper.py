@@ -12,7 +12,7 @@ from pathlib import Path
 from credshed.lib.pastebin import *
 
 # set up logging
-log = logging.getLogger('credshed.pastebin')
+log = logging.getLogger('credshed.pastebin-cli')
 log.setLevel(logging.DEBUG)
 
 # log INFO and up to stderr
@@ -36,7 +36,10 @@ def main(options):
         sys.exit(1)
 
     pastebin = Pastebin(cred_shed, options.loop_delay, options.scrape_limit, options.save_dir, (not options.dont_save))
-    pastebin.monitor()
+    if options.report:
+        pastebin.report(days=options.report_days, limit=options.report_limit)
+    else:
+        pastebin.monitor()
 
 
 
@@ -46,6 +49,8 @@ if __name__ == '__main__':
 
     default_loop_delay = 60
     default_scrape_limit = 100
+    default_report_days = 30
+    default_report_limit = 20
     default_save_dir = Path.cwd()
 
     parser.add_argument('-d', '--loop-delay',   type=int,   default=default_loop_delay,     help=f'seconds between API queries (default {default_loop_delay})')
@@ -54,12 +59,21 @@ if __name__ == '__main__':
     parser.add_argument('--dont-save',                  action='store_true',                help="don't write pastes to file")
     parser.add_argument('--no-metadata',                action='store_true',                help='disable metadata database')
     parser.add_argument('--metadata-only',              action='store_true',                help='when importing, only import metadata')
+    parser.add_argument('--report',                     action='store_true',                help='summarize recent pastes')
+    parser.add_argument('--report-days',        type=int,   default=default_report_days,    help=f'how may days to go back (default {default_report_days})')
+    parser.add_argument('--report-limit',       type=int,   default=default_report_limit,   help=f'limit report size (default {default_report_limit})')
+    parser.add_argument('--debug',                      action='store_true',                help='display debugging info')
 
     try:
 
         options = parser.parse_args()
 
         assert not (options.no_metadata and options.metadata_only), "Conflicting options: --no-metadata and --only-metadata"
+
+        if options.debug:
+            console.setLevel(logging.DEBUG)
+        else:
+            console.setLevel(logging.INFO)
 
         main(options)
 

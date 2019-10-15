@@ -72,7 +72,7 @@ class DB():
                 except KeyError as e:
                     raise CredShedConfigError(str(e))
 
-                # meta DB (account metadata including source information, counters, leak <--> account associations, etc.)
+                # meta DB (account metadata including source information, leak <--> account associations, etc.)
                 self.meta_client = pymongo.MongoClient(meta_server, meta_port, username=self.mongo_user, password=self.mongo_pass)
                 self.meta_db = self.meta_client[meta_db]
                 try:
@@ -101,8 +101,6 @@ class DB():
 
         # sources
         self.sources = self.main_db.sources
-        # counters
-        self.counters = self.main_db.counters
 
         # leak-specific counters
         self.leak_unique = 0
@@ -174,9 +172,9 @@ class DB():
                     email_hash = decode(base64.b64encode(hashlib.sha256(encode(email)).digest()[:6]))
                     query_str = domain_chunk + '\\|' +  email_hash
 
-                    query_regex = r'^{}.*'.format(query_str)
+                    query_regex = rf'^{query_str}.*'
                     query = {'_id': {'$regex': query_regex}}
-                    self.log.info('Raw mongo query: {}'.format(str(query)))
+                    self.log.info(f'Raw mongo query: {query}')
                     results['emails'] = self.accounts.find(query).limit(max_results)
                     #results['emails'] = self.accounts.find({'email': email, '_id': {'$regex': domain_regex}})
                     #results['emails'] = self.accounts.find({'email': email})
@@ -198,24 +196,24 @@ class DB():
 
                 if domain.endswith('.'):
                     # if query is like ".com"
-                    query_regex = r'^{}[\w.]*\|'.format(domain)
+                    query_regex = rf'^{domain}[\w.]*\|'
                 else:
                     # or if query is like "example.com"
-                    query_regex = r'^{}[\.\|]'.format(domain)
+                    query_regex = rf'^{domain}[\.\|]'
 
                 num_sections = len(domain.split('.'))
                 query = {'_id': {'$regex': query_regex}}
-                self.log.info('Raw mongo query: {}'.format(str(query)))
+                self.log.info(f'Raw mongo query: {query}')
                 results['emails'] = self.accounts.find(query).limit(max_results)
 
             elif query_type == 'username':
-                query_regex = r'^{}$'.format(re.escape(keyword))
+                query_regex = rf'^{re.escape(keyword)}$'
                 query = {'username': {'$regex': query_regex}}
-                self.log.info('Raw mongo query: {}'.format(str(query)))
+                self.log.info(f'Raw mongo query: {query}')
                 results['usernames'] = self.accounts.find(query).limit(max_results)
 
             else:
-                raise CredShedError('Invalid query type: {}'.format(str(query_type)))
+                raise CredShedError(f'Invalid query type: {query_type}')
 
             for category in results:
                 for result in results[category]:
@@ -223,7 +221,7 @@ class DB():
                         account = Account.from_document(result)
                         yield account
                     except AccountCreationError as e:
-                        self.log.warning('{}'.format(str(e)))
+                        self.log.warning(str(e))
             
 
 
@@ -258,15 +256,20 @@ class DB():
             except KeyError as e:
                 raise CredShedError('Error retrieving source IDs from account "{}": {}'.format(str(_id), str(e)))
             except TypeError as e:
-                self.log.debug('No source IDs found for account ID "{}": {}'.format(str(_id), str(e)))
+                pass
+                #self.log.debug('No source IDs found for account ID "{}": {}'.format(str(_id), str(e)))
 
             account_metadata = AccountMetadata(sources)
             return account_metadata
 
 
 
-    def add_leak(self, leak, show_unique=False, num_child_processes=4):
+    def add_leak(self, leak, num_child_processes=4):
         '''
+
+        Adds Leak() object to database
+        Yields Account() object for any unique account
+
         benchmarks for adding 1M accounts:
             (best average: ~62,500 per second)
                 batch size - time
@@ -350,12 +353,11 @@ class DB():
             self.log.debug('Using {} child processes'.format(num_child_processes))
 
             # start the child processes
-            # self.log.debug('starting _babysit_child_processes() with {} child processes'.format(num_child_processes))
-            self._babysit_child_processes(leak, source_id, num_child_processes, show_unique=show_unique)
-
+            for unique_account in self._babysit_child_processes(leak, source_id, num_child_processes):
+                yield unique_account
 
             # update source counter
-            self.counters.update_one({'collection': 'sources'}, {'$set': {str(source_id): self.leak_overall}}, upsert=True)
+            self.sources.update_one({'_id': source_id}, {'$set': {'size': self.leak_overall}})
 
             end_time = datetime.now()
             time_elapsed = (end_time - start_time).total_seconds()
@@ -392,7 +394,7 @@ class DB():
 
 
 
-    def _babysit_child_processes(self, leak, source_id, num_child_processes, show_unique=False, process_timeout_seconds=300):
+    def _babysit_child_processes(self, leak, source_id, num_child_processes, process_timeout_seconds=300):
 
         timeout_delta = timedelta(seconds=process_timeout_seconds)
 
@@ -506,30 +508,28 @@ class DB():
                 while 1:
                     #self.log.debug('Clearing result queue')
                     try:
-                        result = result_queues[thread_id].get_nowait()
+                        upserted_accounts = result_queues[thread_id].get_nowait()
 
                         last_active_times[thread_id] = datetime.now()
 
-                        if result is None:
+                        if upserted_accounts is None:
                             # self.log.debug('Child process #{} finished in {}'.format(thread_id, leak.source.name))
                             # mark as finished
                             child_processes[thread_id] = 'finished'
                         else:
                             # self.log.debug('ADD {} NEW ACCOUNTS FOR {}'.format(new_accounts, leak.source.name))
-                            self.leak_unique += result.upserted_count
-                            if show_unique:
-                                for _id in result.upserted_ids.values():
-                                    try:
-                                        unique_account = self.find_one(_id)
-                                    except CredShedDatabaseError:
-                                        self.log.debug(f'Error retrieving newly-inserted account: {_id}')
-                                        continue
-                                    self.log.info(f'UNIQUE ACCOUNT: {unique_account}')
+                            self.leak_unique += len(upserted_accounts)
+                            for _id, account_doc in upserted_accounts.items():
+                                try:
+                                    account_doc['_id'] = _id
+                                except TypeError:
+                                    continue
+                                yield Account.from_document(account_doc)
                             
                     except queue.Empty:
                         break
                     except OSError as e:
-                        log.error('OSError: {}'.format(str(e)))
+                        log.error(f'OSError: {e}')
                         break
 
 
@@ -609,7 +609,6 @@ class DB():
                 errprint('\r[+] Deleted {:,} accounts'.format(accounts_deleted), end='')
 
                 self.sources.delete_many({'_id': source_id})
-                self.counters.update_one({'collection': 'sources'}, {'$unset': {str(source_id): ''}})
 
 
             except TypeError as e:
@@ -634,8 +633,8 @@ class DB():
             return source_id
             #assert False, 'Source already exists'
         else:
-            d = self.counters.find_one({'collection': 'sources'})
-            id_counter = (d['id_counter'] if d else 0)
+            d = self.sources.find_one(sort=[('_id', 1)])
+            id_counter = (d['_id']+1 if d else 0)
 
             source_doc = source.document(misc=True, date=True)
             while 1:       
@@ -648,12 +647,10 @@ class DB():
                 except pymongo.errors.DuplicateKeyError:
                     continue
 
-            self.counters.update_one({'collection': 'sources'}, {'$set': {'id_counter': id_counter}}, upsert=True)
-
         return id_counter
 
 
-    def stats(self, accounts=False, counters=False, sources=True, db=False):
+    def stats(self, accounts=False, sources=True, db=False):
         '''
         prints database statistics
         returns most recently added source ID, if applicable
@@ -672,33 +669,32 @@ class DB():
                         stats.append('\t{}: {}'.format(k, accounts_stats[k]))
             stats.append('')
 
-            '''
-            if counters:
-                counters_stats = self.db.command('collstats', 'counters', scale=1048576)
-                self.log.info('[+] Counter Stats (MB):')
-                for k in counters_stats:
-                    if k not in ['wiredTiger', 'indexDetails']:
-                        self.log.info('\t{}: {}'.format(k, counters_stats[k]))
-                self.log.info()
-            '''
-
             if sources:
 
                 sources_stats = dict()
 
+                # temporary code to move source counters into sources collection
+                counters = self.main_db.counters.find({})[0]
+                for source_id, source_size in counters.items():
+                    try:
+                        source_id = int(source_id)
+                        source_size = int(source_size)
+                    except ValueError:
+                        continue
+                    self.sources.update_one({'_id': source_id}, {'$set': {'size': source_size}})
+
+
                 for s in self.sources.find({}):
-                    sources_stats[s['_id']] = Source(s['name'], s['hashtype'], s['misc'])
+                    source_id = s.pop('_id')
+                    try:
+                        sources_stats[source_id] = Source(**s)
+                    except TypeError as e:
+                        self.log.error(f'Error fetching source ID {source_id}: {e}')
 
                 if sources_stats:
                     stats.append('[+] Leaks in DB:')
-                    for _id in sources_stats:
-                        source = sources_stats[_id]
-                        try:
-                            source_size = ' [{:,}]'.format(self.counters.find_one({'collection': 'sources'})[str(_id)])
-                        except KeyError:
-                            source_size = ''
-
-                        stats.append('\t{}: {}{}'.format(_id, str(source), source_size))
+                    for _id, source in sources_stats.items():
+                        stats.append(f'\t{_id}: {source}')
                     stats.append('')
 
         except pymongo.errors.OperationFailure:
@@ -864,11 +860,11 @@ class DB():
                             try:
 
                                 if self.use_metadata:
-                                    result = self._mongo_meta_add_batch(mongo_meta, source_id, batch, error_queue)
+                                    upserted_accounts = self._mongo_meta_add_batch(mongo_meta, source_id, batch, error_queue)
                                 if not self.metadata_only:
-                                    result = self._mongo_main_add_batch(mongo_main, source_id, copy.deepcopy(batch), error_queue)
+                                    upserted_accounts = self._mongo_main_add_batch(mongo_main, source_id, copy.deepcopy(batch), error_queue)
 
-                                result_queue.put(result)
+                                result_queue.put(upserted_accounts)
 
                             except pymongo.errors.PyMongoError as e:
                                 error = str(e)
@@ -910,25 +906,34 @@ class DB():
 
 
     @staticmethod
-    def _mongo_main_add_batch(_mongo, source_id, batch, error_queue, precise=False, max_attempts=3):
+    def _mongo_main_add_batch(_mongo, source_id, batch, error_queue, max_attempts=3):
 
         unique_accounts = 0
         attempts_left = int(max_attempts)
         mongo_batch = []
         error_details = ''
 
+        # keeps track of unique accounts
+        all_accounts = dict()
+        upserted_accounts = dict()
+
         for account_doc in batch:
             _id = account_doc.pop('_id')
-            if precise:
-                mongo_batch.append(pymongo.UpdateOne({'_id': _id}, {'$setOnInsert': account_doc}, upsert=True))
-            else:
-                mongo_batch.append(pymongo.UpdateOne({'_id': _id}, {'$setOnInsert': account_doc}, upsert=True))
+            mongo_batch.append(pymongo.UpdateOne({'_id': _id}, {'$setOnInsert': account_doc}, upsert=True))
+            all_accounts[_id] = account_doc
 
         while attempts_left > 0:
             try:
 
-                result = _mongo.accounts.bulk_write(mongo_batch, ordered=False)
-                return result
+                for _id in _mongo.accounts.bulk_write(mongo_batch, ordered=False).upserted_ids.values():
+                    upserted_accounts[_id] = None
+                # remove any account which is not unique
+                for _id in upserted_accounts.keys():
+                    try:
+                        upserted_accounts[_id] = all_accounts.pop(_id)
+                    except KeyError:
+                        continue
+                return upserted_accounts
 
             # sleep for a bit and try again if there's an error
             except (pymongo.errors.OperationFailure, pymongo.errors.InvalidOperation) as e:
@@ -975,3 +980,5 @@ class DB():
                 continue
 
         raise CredShedDatabaseError('\nFailed to add batch to meta DB after {} tries'.format(max_attempts))
+
+

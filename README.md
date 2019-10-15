@@ -1,5 +1,5 @@
 # c r e d s h e d
-A full-featured solution for injesting, organizing, storing, and querying public credential leaks.  Injests gigantic files or entire directories with ease.  (For funzies, try giving it your `/etc` directory and watch it pull out every single email address!)
+A full-featured solution for injesting, organizing, storing, and querying public credential leaks.  Injests gigantic files or entire directories with ease.  (It will find every email address in your `/etc` directory if you tell it to!)
 Includes native Pastebin-scraping functionality.
 
 ![credshed-gui-screenshot](https://user-images.githubusercontent.com/20261699/60762868-33d44580-a02e-11e9-8294-200c711328f5.png)
@@ -10,8 +10,8 @@ Includes native Pastebin-scraping functionality.
 $ ./credshed-cli.py --help
 usage: credshed-cli.py [-h] [-q QUERY_TYPE] [-a ADD [ADD ...]] [-t] [-o OUT]
                        [-d [SOURCE_ID [SOURCE_ID ...]]] [-dd] [-p] [-m]
-                       [--threads THREADS] [-u] [--no-metadata]
-                       [--metadata-only] [-v]
+                       [--threads THREADS] [--show-unique] [-u]
+                       [--no-metadata] [--metadata-only] [-v]
                        [search [search ...]]
 
 positional arguments:
@@ -23,24 +23,27 @@ optional arguments:
                         query type (email, domain, or username)
   -a ADD [ADD ...], --add ADD [ADD ...]
                         add files or directories to the database
-  -t, --stats           show db stats
+  -t, --stats           show all import leaks and DB stats
   -o OUT, --out OUT     write output to file instead of database
   -d [SOURCE_ID [SOURCE_ID ...]], --delete-leak [SOURCE_ID [SOURCE_ID ...]]
                         delete leak(s) from database, e.g. "1-3,5,7-9"
-  -dd, --deduplication  deduplicate accounts ahead of time (may eat memory)
+  -dd, --deduplication  deduplicate accounts ahead of time (lots of memory
+                        usage on large files)
   -p, --search-passwords
                         search by password
   -m, --search-description
                         search by description / misc
   --threads THREADS     number of threads for import operations
+  --show-unique         show each unique imported account
   -u, --unattended      auto-detect import fields without user interaction
-  --no-metadata         disable metadata database
+  --no-metadata         don't use metadata database
   --metadata-only       when importing, only import metadata
   -v, --verbose         display all available data for each account
 ~~~
 
 ## Setup
 Database setup is almost entirely automated with the `srv.sh` script located in `credshed/docker`
+- NOTE: this will set up a sharded mongo cluster on the local machine using Docker Compose.  If you're familiar with MongoDB, feel free to set up the database manually.
 ~~~
 $ ./srv.sh --help
 Usage: srv.sh [option]
@@ -103,7 +106,7 @@ db=credshed
 user=root
 pass=INTHENAMEOFALLTHATISHOLYPLEASECHANGETHIS
 ~~~
-6. Take it for a test run
+6. Verify the config is valid by searching the database
 ~~~
 $ ./credshed-cli.py test@example.com
 ~~~

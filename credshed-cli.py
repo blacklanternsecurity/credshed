@@ -40,12 +40,12 @@ logging.getLogger('credshed').addHandler(console)
 
 class CredShedCLI(CredShed):
 
-    def __init__(self, output='__db__', unattended=False, metadata=True, metadata_only=False, deduplication=False, show_unique=False, threads=2):
+    def __init__(self, output='__db__', unattended=False, metadata=True, metadata_only=False, deduplication=False, threads=2):
 
         output = Path(output)
 
         super().__init__(output=output, unattended=unattended, metadata=metadata, \
-            metadata_only=metadata_only, deduplication=deduplication, show_unique=show_unique, threads=threads)
+            metadata_only=metadata_only, deduplication=deduplication, threads=threads)
 
         # if we're outputting to a file instead of the DB
         if not str(output) == '__db__':
@@ -148,7 +148,7 @@ def main(options):
     try:
         cred_shed = CredShedCLI(output=options.out, unattended=options.unattended, \
             metadata=(not options.no_metadata), metadata_only=options.metadata_only, \
-            deduplication=options.deduplication, show_unique=options.show_unique, threads=options.threads)
+            deduplication=options.deduplication, threads=options.threads)
     except CredShedError as e:
         log.critical('{}: {}\n'.format(e.__class__.__name__, str(e)))
         sys.exit(1)
@@ -159,7 +159,7 @@ def main(options):
     # if we're importing stuff
     try:
         if options.add:
-            cred_shed.import_files(options.add)
+            cred_shed.import_files(options.add, quiet=not(options.show_unique))
 
         elif options.delete_leak is not None:
             cred_shed.delete_leaks(options.delete_leak)
@@ -211,44 +211,45 @@ if __name__ == '__main__':
     parser.add_argument('search',                       nargs='*',                      help='search term(s)')
     parser.add_argument('-q', '--query-type',           default='auto',                 help='query type (email, domain, or username)')
     parser.add_argument('-a', '--add',      type=Path,  nargs='+',                      help='add files or directories to the database')
-    parser.add_argument('-t', '--stats',    action='store_true',                        help='show db stats')
+    parser.add_argument('-t', '--stats',    action='store_true',                        help='show all imported leaks and DB stats')
     parser.add_argument('-o', '--out',      type=Path,  default='__db__',               help='write output to file instead of database')
     parser.add_argument('-d', '--delete-leak',          nargs='*',                      help='delete leak(s) from database, e.g. "1-3,5,7-9"', metavar='SOURCE_ID')
-    parser.add_argument('-dd', '--deduplication',       action='store_true',            help='deduplicate accounts ahead of time (may eat memory)')
+    parser.add_argument('-dd', '--deduplication',       action='store_true',            help='deduplicate accounts ahead of time (lots of memory usage on large files)')
     parser.add_argument('-p', '--search-passwords',     action='store_true',            help='search by password')
     parser.add_argument('-m', '--search-description',   action='store_true',            help='search by description / misc')
     parser.add_argument('--threads',        type=int,   default=default_threads,        help='number of threads for import operations')
     parser.add_argument('--show-unique',    action='store_true',                        help='show each unique imported account')
     parser.add_argument('-u', '--unattended',           action='store_true',            help='auto-detect import fields without user interaction')
-    parser.add_argument('--no-metadata',                action='store_true',            help='disable metadata database')
+    parser.add_argument('--no-metadata',                action='store_true',            help="don't use metadata database")
     parser.add_argument('--metadata-only',              action='store_true',            help='when importing, only import metadata')
     parser.add_argument('-v', '--verbose',              action='store_true',            help='display all available data for each account')
+    parser.add_argument('--debug',                      action='store_true',            help='display debugging info')
 
     try:
 
         if len(sys.argv) < 2:
             parser.print_help()
-            exit(0)
+            sys.exit(0)
 
         options = parser.parse_args()
 
         assert not (options.no_metadata and options.metadata_only), "Conflicting options: --no-metadata and --only-metadata"
-        #print(options.delete_leak)
-        #exit(1)
+
+        if options.debug:
+            console.setLevel(logging.DEBUG)
+            options.verbose = True
+        else:
+            console.setLevel(logging.INFO)
 
         main(options)
 
     except AssertionError as e:
         errprint('\n\n[!] {}\n'.format(str(e)))
-        exit(2)
+        sys.exit(2)
 
     except argparse.ArgumentError as e:
         errprint('\n\n[!] {}\n[!] Check your syntax'.format(str(e)))
-        exit(2)
-
-    #except (KeyboardInterrupt, BrokenPipeError):
-    #    errprint('\n\n[!] Interrupted')
-    #    exit(1)
+        sys.exit(2)
 
     except AssertionError as e:
         errprint('\n\n[!] {}'.format(str(e)))
