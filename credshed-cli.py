@@ -5,48 +5,83 @@
 '''
 TODO:
     - when importing, prompt user for confirmation (with first / last 10 files and total count)
+    - performance benchmarks (4x 500GB Samsung SSDs in LVM RAID 0):
+        - 4 shards:
+            - >> 3,666 files completed in 4 days, 2:33:34 <<
+            - [+] Searched 1,021,786,928 accounts in 0:00:00.06 seconds
+        - 10 shards:
+            - >> 4,549/29,551 (15.4%) files completed in 3 days, 7:17:19 <<
+            - [+] Searched 1,174,146,654 accounts in 0:00:00.07 seconds
 '''
 
 import sys
+import logging
 import argparse
-from lib.core import *
-from lib.errors import *
+from credshed import *
 from pathlib import Path
 from datetime import datetime
 from multiprocessing import cpu_count
+
+# set up logging
+log = logging.getLogger('credshed.cli')
+log.setLevel(logging.DEBUG)
+
+# log INFO and up to stderr
+console = logging.StreamHandler()
+console.setLevel(logging.DEBUG)
+# set a format which is simpler for console use
+formatter = logging.Formatter('[%(levelname)s] %(message)s')
+# tell the handler to use this format
+console.setFormatter(formatter)
+# add the handler to the root logger
+logging.getLogger('credshed').addHandler(console)
 
 
 
 class CredShedCLI(CredShed):
 
-    def __init__(self, output='__db__', unattended=False, deduplication=False, threads=2):
+    def __init__(self, output='__db__', unattended=False, metadata=True, metadata_only=False, deduplication=False, threads=2):
+
+        output = Path(output)
+
+        super().__init__(output=output, unattended=unattended, metadata=metadata, \
+            metadata_only=metadata_only, deduplication=deduplication, threads=threads)
 
         # if we're outputting to a file instead of the DB
         if not str(output) == '__db__':
             # validate output destination
-            self.output = self.output.resolve()
+            self.output = output.resolve()
             assert not self.output.is_dir(), 'Creation of {} is blocked'.format(self.output)
             if self.output.exists():
-                errprint('[!] Overwriting {} - CTRL+C to cancel'.format(self.output))
+                self.log.warning('Overwriting {} - CTRL+C to cancel'.format(self.output))
                 sleep(5)
 
-        super().__init__(unattended=unattended, deduplication=deduplication, threads=threads)
+        if not self.db.use_metadata:
+            if metadata_only:
+                raise CredShedMetadataError('"metadata_only" option specified but none available')
+            else:
+                self.log.warning('Continuing without metadata support')
+                self.metadata=False
 
 
-    def _search(self, query, query_type):
+    def _search(self, query, query_type, verbose=False):
 
         start_time = datetime.now()
         num_accounts_in_db = self.db.account_count()
 
         num_results = 0
-        for result in self.search(query, query_type=query_type):
-            print(result)
+        for account in self.search(query, query_type=query_type, verbose=verbose):
+            print(str(account))
+            if verbose:
+                metadata = self.db.fetch_account_metadata(account)
+                if metadata:
+                    print(metadata)
             num_results += 1
 
         end_time = datetime.now()
         time_elapsed = (end_time - start_time)
-        errprint('\n[+] Searched {:,} accounts in {} seconds'.format(num_accounts_in_db, str(time_elapsed)[:-4]))
-        errprint('[+] {:,} results for "{}"'.format(num_results, '|'.join(query)))
+        self.log.info('Searched {:,} accounts in {} seconds'.format(num_accounts_in_db, str(time_elapsed)[:-4]))
+        self.log.info('{:,} results for "{}"'.format(num_results, '|'.join(query)))
 
 
     def _stats(self):
@@ -54,13 +89,68 @@ class CredShedCLI(CredShed):
         print(self.stats())
 
 
+    def delete_leaks(self, source_ids=[]):
+        
+        try:
+
+            if source_ids:
+
+                to_delete = {}
+                for source_id in number_range(source_ids):
+                    source_info = (self.db.get_source(source_id))
+                    if source_info is not None:
+                        to_delete[source_id] = str(source_id) + ': ' + str(source_info)
+
+                if to_delete:
+                    errprint('\nDeleting accounts from:\n\t{}'.format('\n\t'.join(to_delete.values())), end='\n\n')
+                    if not input('OK? [Y/n] ').lower().startswith('n'):
+                        start_time = datetime.now()
+
+                        self.log.debug(errprint('Deleting accounts from: {}'.format(', '.join(to_delete.values()))))
+
+                        for source_id in to_delete:
+                            self.delete_leak(source_id)
+
+                        end_time = datetime.now()
+                        time_elapsed = (end_time - start_time)
+
+                        errprint('\nDeletion finished.  Time Elapsed: {}'.format(str(time_elapsed).split('.')[0]))
+                        self.log.debug('Deletion of {} finished.  Time Elapsed: {}\n'.format(', '.join(to_delete.values()), str(time_elapsed).split('.')[0]))
+                else:
+                    self.log.warning('No valid leaks specified were specified for deletion')
+
+            else:
+
+                while 1:
+
+                    assert self.db.sources.estimated_document_count() > 0, 'No more leaks in DB'
+                    print(self.db.stats())
+                    most_recent_source_id = self.db.most_recent_source_id()
+
+                    try:
+                        to_delete = [input('Enter ID(s) to delete [{}] (CTRL+C when finished): '.format(most_recent_source_id))] or [most_recent_source_id]
+                    except ValueError:
+                        errprint('[!] Invalid entry', end='\n\n')
+                        sleep(1)
+                        continue
+
+                    self.delete_leaks(to_delete)
+
+
+        except KeyboardInterrupt:
+            errprint('\n[*] Deletion cancelled')
+            sys.exit(1)
+
+
 
 def main(options):
 
     try:
-        cred_shed = CredShedCLI(output=options.out, unattended=options.unattended, deduplication=options.deduplication, threads=options.threads)
+        cred_shed = CredShedCLI(output=options.out, unattended=options.unattended, \
+            metadata=(not options.no_metadata), metadata_only=options.metadata_only, \
+            deduplication=options.deduplication, threads=options.threads)
     except CredShedError as e:
-        errprint('[!] {}\n'.format(str(e)))
+        log.critical('{}: {}\n'.format(e.__class__.__name__, str(e)))
         sys.exit(1)
 
     options.query_type = options.query_type.strip().lower()
@@ -69,7 +159,7 @@ def main(options):
     # if we're importing stuff
     try:
         if options.add:
-            cred_shed.import_files(options.add)
+            cred_shed.import_files(options.add, quiet=not(options.show_unique))
 
         elif options.delete_leak is not None:
             cred_shed.delete_leaks(options.delete_leak)
@@ -81,27 +171,27 @@ def main(options):
                 if options.query_type == 'auto':
                     if Account.is_email(keyword):
                         options.query_type = 'email'
-                        errprint('[+] Searching by email')
+                        log.info('Searching by email: "{}"'.format(keyword))
                     elif re.compile(r'^([a-zA-Z0-9_\-\.]*)\.([a-zA-Z]{2,8})$').match(keyword):
                         options.query_type = 'domain'
-                        errprint('[+] Searching by domain')
+                        log.info('Searching by domain: "{}"'.format(keyword))
                     else:
                         raise CredShedError('Failed to auto-detect query type, please specify with --query-type')
                         return
                         # options.query_type = 'username'
                         # errprint('[+] Searching by username')
 
-                cred_shed._search(options.search, query_type=options.query_type)
+                cred_shed._search(options.search, query_type=options.query_type, verbose=options.verbose)
 
         if options.stats:
             cred_shed._stats()
 
     except CredShedError as e:
-        errprint('[!] {}'.format(str(e)))
+        log.error('{}: {}\n'.format(e.__class__.__name__, str(e)))
 
     except KeyboardInterrupt:
         cred_shed.STOP = True
-        errprint('[!] CredShed Interrupted\n')
+        errprint('\n[!] Stopping CLI, please wait for threads to finish\n')
         return
 
     finally:
@@ -120,40 +210,51 @@ if __name__ == '__main__':
 
     parser.add_argument('search',                       nargs='*',                      help='search term(s)')
     parser.add_argument('-q', '--query-type',           default='auto',                 help='query type (email, domain, or username)')
-    parser.add_argument('-a', '--add',      type=Path,  nargs='+',                      help='add file(s) to DB')
-    parser.add_argument('-t', '--stats',    action='store_true',                        help='show db stats')
-    parser.add_argument('-o', '--out',      type=Path,  default='__db__',               help='write output to file instead of DB')
-    parser.add_argument('-d', '--delete-leak',          nargs='*',                      help='delete leak(s) from DB, e.g. "1-3,5,7-9"', metavar='SOURCE_ID')
-    parser.add_argument('-dd', '--deduplication',       action='store_true',            help='deduplicate accounts ahead of time (may eat memory)')
+    parser.add_argument('-a', '--add',      type=Path,  nargs='+',                      help='add files or directories to the database')
+    parser.add_argument('-t', '--stats',    action='store_true',                        help='show all imported leaks and DB stats')
+    parser.add_argument('-o', '--out',      type=Path,  default='__db__',               help='write output to file instead of database')
+    parser.add_argument('-d', '--delete-leak',          nargs='*',                      help='delete leak(s) from database, e.g. "1-3,5,7-9"', metavar='SOURCE_ID')
+    parser.add_argument('-dd', '--deduplication',       action='store_true',            help='deduplicate accounts ahead of time (lots of memory usage on large files)')
     parser.add_argument('-p', '--search-passwords',     action='store_true',            help='search by password')
     parser.add_argument('-m', '--search-description',   action='store_true',            help='search by description / misc')
     parser.add_argument('--threads',        type=int,   default=default_threads,        help='number of threads for import operations')
+    parser.add_argument('--show-unique',    action='store_true',                        help='show each unique imported account')
     parser.add_argument('-u', '--unattended',           action='store_true',            help='auto-detect import fields without user interaction')
+    parser.add_argument('--no-metadata',                action='store_true',            help="don't use metadata database")
+    parser.add_argument('--metadata-only',              action='store_true',            help='when importing, only import metadata')
+    parser.add_argument('-v', '--verbose',              action='store_true',            help='display all available data for each account')
+    parser.add_argument('--debug',                      action='store_true',            help='display debugging info')
 
     try:
 
         if len(sys.argv) < 2:
             parser.print_help()
-            exit(0)
+            sys.exit(0)
 
         options = parser.parse_args()
-        #print(options.delete_leak)
-        #exit(1)
+
+        assert not (options.no_metadata and options.metadata_only), "Conflicting options: --no-metadata and --only-metadata"
+
+        if options.debug:
+            console.setLevel(logging.DEBUG)
+            options.verbose = True
+        else:
+            console.setLevel(logging.INFO)
 
         main(options)
 
+    except AssertionError as e:
+        errprint('\n\n[!] {}\n'.format(str(e)))
+        sys.exit(2)
+
     except argparse.ArgumentError as e:
         errprint('\n\n[!] {}\n[!] Check your syntax'.format(str(e)))
-        exit(2)
-
-    #except (KeyboardInterrupt, BrokenPipeError):
-    #    errprint('\n\n[!] Interrupted')
-    #    exit(1)
+        sys.exit(2)
 
     except AssertionError as e:
         errprint('\n\n[!] {}'.format(str(e)))
 
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, BrokenPipeError):
         errprint('\n\n[!] Interrupted')
 
     finally:

@@ -1,0 +1,13 @@
+[Unit]
+Description=CredShed Pastebin Scraper
+Requires=credshed.service
+After=credshed.service
+
+[Service]
+User=root
+WorkingDirectory=/opt/credshed
+ExecStart=/usr/bin/env python3.7 pastebin-scraper.py
+Restart=always
+
+[Install]
+WantedBy=multi-user.target

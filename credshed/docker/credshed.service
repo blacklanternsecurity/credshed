@@ -1,0 +1,12 @@
+[Unit]
+Description=CredShed Database
+Requires=docker.service
+After=docker.service
+
+[Service]
+WorkingDirectory=/opt/credshed/credshed/docker
+ExecStart=/usr/local/bin/docker-compose up
+ExecStop=/usr/local/bin/docker-compose down
+
+[Install]
+WantedBy=multi-user.target
