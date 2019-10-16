@@ -84,6 +84,8 @@ class Pastebin():
 
     def __init__(self, credshed, loop_delay=60, scrape_limit=100, save_dir=None, keep_pastes=True):
 
+        from .core import parse_config
+
         self.credshed = credshed
         self.ref_id = None
         self.queue = []
@@ -92,6 +94,7 @@ class Pastebin():
         self.keep_pastes = keep_pastes
         self.scrape_limit = scrape_limit
         self.session = requests.Session()
+        self.config = parse_config()
 
         if save_dir is None:
             save_dir = Path.cwd()
@@ -290,10 +293,9 @@ class PasteBinReport():
     def html_report(self):
 
         html = f'''
-        <html style="background-color: black; color: white">
+        <html style='background-color: black; color: white; font-family: "Open Sans", verdana, arial, sans-serif'>
             <head>
-                <h2 style="font-weight: bold">c r e d s h e d</h2>
-                <h3>Scraping Report</h3>
+                <h2 style='font-weight: bold; font-family: SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace !important'>c r e d s h e d</h2>
                 <hr>
             </head>
             <body>
@@ -319,7 +321,7 @@ class PasteBinReport():
 
         # Use `hole` to create a donut-like pie chart
         fig = go.Figure(data=[go.Pie(labels=labels, values=values, hole=.3)])
-        fig.layout.title = 'Unique Accounts by Domain'
+        fig.layout.title = f'Unique Accounts by Domain (Last {self.days:,} Days)'
         fig.layout.template = 'plotly_dark'
 
         return fig
@@ -329,6 +331,7 @@ class PasteBinReport():
 
         assert Paste.email_regex.match(to), f'Invalid email: "{to}"'
 
+        import smtplib
         import mimetypes
         from email.utils import make_msgid
         from email.message import EmailMessage
@@ -337,7 +340,7 @@ class PasteBinReport():
 
         # generic email headers
         msg['Subject'] = f'CredShed Scraping Report {datetime.now().isoformat(timespec="hours").split("T")[0]}'
-        msg['From'] = 'The CredShed <scraping@credshed.com>'
+        msg['From'] = self.pastebin.config['EMAIL ALERTS']['from']
         msg['To'] = f'<{to}>'
 
         # set the plain text body
@@ -348,7 +351,12 @@ class PasteBinReport():
 
         # set an alternative html body
         msg.add_alternative(f"""\
-        <html>
+        <html style='background-color: black; color: white; font-family: "Open Sans", verdana, arial, sans-serif'>
+          <head>
+            <h2 style='font-weight: bold; font-family: SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace !important'>
+              c r e d s h e d
+            </h2>
+          </head>
           <body>
             <img src="cid:{image_cid[1:-1]}">
           </body>
@@ -366,18 +374,24 @@ class PasteBinReport():
         # so we use [1:-1] to strip them off
 
         # now open the image and attach it to the email
-        '''
-        with open('path/to/image.jpg', 'rb') as img:
+        with open('/tmp/test.png', 'rb') as img:
 
             # know the Content-Type of the image
             maintype, subtype = mimetypes.guess_type(img.name)[0].split('/')
 
             # attach it
             msg.get_payload()[1].add_related(img.read(), maintype=maintype, subtype=subtype, cid=image_cid)
-        '''
 
         # the message is ready now
-        # you can write it to a file
-        # or send it using smtplib
 
-        print(dir(msg))
+        # Send the message via our own SMTP server.
+        mail_server = self.pastebin.config['EMAIL ALERTS']['mail_server']
+        mail_port = self.pastebin.config['EMAIL ALERTS']['mail_port']
+        auth_user = self.pastebin.config['EMAIL ALERTS']['auth_user']
+        auth_pass = self.pastebin.config['EMAIL ALERTS']['auth_pass']
+        s = smtplib.SMTP(mail_server, mail_port)
+        s.ehlo()
+        s.starttls()
+        s.login(auth_user, auth_password)
+        s.send_message(msg)
+        s.quit()

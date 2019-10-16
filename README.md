@@ -9,9 +9,9 @@ Includes native Pastebin-scraping functionality.
 ~~~
 $ ./credshed-cli.py --help
 usage: credshed-cli.py [-h] [-q QUERY_TYPE] [-a ADD [ADD ...]] [-t] [-o OUT]
-                       [-d [SOURCE_ID [SOURCE_ID ...]]] [-dd] [-p] [-m]
+                       [-d [SOURCE_ID [SOURCE_ID ...]]] [-dd]
                        [--threads THREADS] [--show-unique] [-u]
-                       [--no-metadata] [--metadata-only] [-v]
+                       [--no-metadata] [--metadata-only] [-v] [--debug]
                        [search [search ...]]
 
 positional arguments:
@@ -23,22 +23,19 @@ optional arguments:
                         query type (email, domain, or username)
   -a ADD [ADD ...], --add ADD [ADD ...]
                         add files or directories to the database
-  -t, --stats           show all import leaks and DB stats
+  -t, --stats           show all imported leaks and DB stats
   -o OUT, --out OUT     write output to file instead of database
   -d [SOURCE_ID [SOURCE_ID ...]], --delete-leak [SOURCE_ID [SOURCE_ID ...]]
                         delete leak(s) from database, e.g. "1-3,5,7-9"
   -dd, --deduplication  deduplicate accounts ahead of time (lots of memory
                         usage on large files)
-  -p, --search-passwords
-                        search by password
-  -m, --search-description
-                        search by description / misc
   --threads THREADS     number of threads for import operations
   --show-unique         show each unique imported account
   -u, --unattended      auto-detect import fields without user interaction
   --no-metadata         don't use metadata database
   --metadata-only       when importing, only import metadata
   -v, --verbose         display all available data for each account
+  --debug               display debugging info
 ~~~
 
 ## Setup
@@ -139,7 +136,7 @@ $ sudo systemctl enable pastebin-scraper.service --now
 # check on its status
 $ journalctl -xefu pastebin-scraper.service
 ~~~
-  - NOTE: interesting pastes will also be saved to the current working directory unless the `--dont-save` option is specified
+  - NOTE: interesting pastes will also be saved to the current working directory unless the `--dont-save` option is specified.  You can change the save directory with the `--save-dir` option.
 
 ## Pastebin Scraper Usage
 ~~~

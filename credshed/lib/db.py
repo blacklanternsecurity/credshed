@@ -26,7 +26,9 @@ class DB():
         self.log = logging.getLogger('credshed.db')
 
         self.metadata_only = metadata_only
-        self.config = self.parse_config()
+        
+        from .core import parse_config
+        self.config = parse_config()
 
         try:
 
@@ -768,19 +770,6 @@ class DB():
             except AttributeError:
                 pass
             raise CredShedDatabaseError(error)
-
-
-    def parse_config(self):
-
-        # parse config file
-        config_filename = Path(__file__).resolve().parent.parent / 'credshed.config'
-        if not config_filename.is_file():
-            raise CredShedConfigError('Unable to find credshed config at {}'.format(config_filename))
-
-        config = configparser.ConfigParser()
-        config.read(str(config_filename))
-
-        return config
 
 
 

@@ -7,36 +7,13 @@ import logging
 import threading
 from .db import DB
 from .leak import *
+import configparser
 from .errors import *
 import pymongo.errors
 from time import sleep
 from queue import Queue
 from .quickparse import *
 from datetime import datetime
-
-
-
-def number_range(s):
-    '''
-    takes array of strings and tries to convert into an array of ints
-    '''
-
-    n_array = set()
-
-    for a in s:
-        for r in a.split(','):
-            try:
-                if '-' in r:
-                    start, end = [int(i) for i in r.split('-')[:2]]
-                    n_array = n_array.union(set(list(range(start, end+1))))
-                else:
-                    n_array.add(int(r))
-
-            except (IndexError, ValueError):
-                sys.stderr.write('[!] Error parsing source ID "{}"'.format(a))
-                continue
-
-    return n_array
 
 
 
@@ -448,3 +425,43 @@ class CredShed():
                     self.log.info(f'UNIQUE ACCOUNT: {self.unique_account_queue.get_nowait()}')
             except queue.Empty:
                 sleep(.1)
+
+
+
+
+
+def parse_config():
+
+    # parse config file
+    config_filename = Path(__file__).resolve().parent.parent / 'credshed.config'
+    if not config_filename.is_file():
+        raise CredShedConfigError('Unable to find credshed config at {}'.format(config_filename))
+
+    config = configparser.ConfigParser()
+    config.read(str(config_filename))
+
+    return config
+
+
+def number_range(s):
+    '''
+    takes array of strings and tries to convert into an array of ints
+    '''
+
+    n_array = set()
+
+    for a in s:
+        for r in a.split(','):
+            try:
+                if '-' in r:
+                    start, end = [int(i) for i in r.split('-')[:2]]
+                    n_array = n_array.union(set(list(range(start, end+1))))
+                else:
+                    n_array.add(int(r))
+
+            except (IndexError, ValueError):
+                sys.stderr.write('[!] Error parsing source ID "{}"'.format(a))
+                continue
+
+    return n_array
+

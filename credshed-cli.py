@@ -215,8 +215,6 @@ if __name__ == '__main__':
     parser.add_argument('-o', '--out',      type=Path,  default='__db__',               help='write output to file instead of database')
     parser.add_argument('-d', '--delete-leak',          nargs='*',                      help='delete leak(s) from database, e.g. "1-3,5,7-9"', metavar='SOURCE_ID')
     parser.add_argument('-dd', '--deduplication',       action='store_true',            help='deduplicate accounts ahead of time (lots of memory usage on large files)')
-    parser.add_argument('-p', '--search-passwords',     action='store_true',            help='search by password')
-    parser.add_argument('-m', '--search-description',   action='store_true',            help='search by description / misc')
     parser.add_argument('--threads',        type=int,   default=default_threads,        help='number of threads for import operations')
     parser.add_argument('--show-unique',    action='store_true',                        help='show each unique imported account')
     parser.add_argument('-u', '--unattended',           action='store_true',            help='auto-detect import fields without user interaction')
