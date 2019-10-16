@@ -195,70 +195,6 @@ class Pastebin():
 
 
 
-    def report(self, days=30, limit=20):
-
-        first_day = datetime.now() - timedelta(days=days)
-        recent_leaks = []
-        for recent_leak in self.credshed.db.sources.find({
-            'date': {'$gt': first_day},
-            'name': {'$regex': r'\d{4}-\d{2}-\d{2}_pastebin_[a-zA-Z0-9_]*\.txt'}
-        }):
-
-            recent_leak = Source.from_document(recent_leak)
-            recent_leaks.append(recent_leak)
-
-        recent_leaks.sort(key=lambda x: x.size, reverse=True)
-        log.info('=' * 80)
-        log.info(f'TOP {limit:,} LEAKS IN THE PAST {days:,} DAYS (TOTAL: {len(recent_leaks):,})')
-        log.info('=' * 80)
-        log.info(f'{"Size":<15}Leak Name')
-        l = int(limit)
-        for recent_leak in recent_leaks:
-            log.info(recent_leak)
-            l -= 1
-            if l <= 1:
-                break
-
-        domains = dict()
-    
-        for day in range(days):
-            date = datetime.now() - timedelta(days=day)
-            date = date.isoformat(timespec='hours').split('T')[0]
-            report_filename = Path(self.save_dir / f'{date}_pastebin_unique_accounts.txt')
-            if report_filename.is_file():
-                try:
-                    leak = Leak()
-                    leak.read(report_filename, strict=False, unattended=True)
-                    for account in leak:
-                        domain = account.email.split(b'@')[-1].decode()
-                        try:
-                            domains[domain] += 1
-                        except KeyError:
-                            domains[domain] = 1
-
-                except QuickParseError as e:
-                    log.error(str(e))
-                    continue
-
-        domains = list(domains.items())
-        domains.sort(key=lambda x: x[-1], reverse=True)
-        total_unique_accounts = sum([d[-1] for d in domains])
-        log.info('=' * 80)
-        log.info(f'UNIQUE ACCOUNTS BY DOMAIN (DOMAINS: {len(domains):,} / UNIQUE ACCOUNTS: {total_unique_accounts:,})')
-        log.info('=' * 80)
-        log.info(f'{"Accounts":<15}Domain')
-        l = int(limit)
-        for domain, count in domains:
-            if count > 1:
-                log.info(f'{count:<15,.0f}{domain}')
-                l -= 1
-                if l <= 1:
-                    break
-
-
-
-
-
     def _tail_unique_account_queue(self, unique_account_queue):
         
         while 1:
@@ -273,3 +209,175 @@ class Pastebin():
                     except queue.Empty:
                         sleep(.1)
                         break
+
+
+
+class PasteBinReport():
+
+    def __init__(self, pastebin, days=30, limit=20):
+
+        self.pastebin = pastebin
+        self.days = days
+        self.limit = limit
+        self.first_day = datetime.now() - timedelta(days=self.days)
+
+        self.recent_leaks = []
+        for recent_leak in self.pastebin.credshed.db.sources.find({
+            'date': {'$gt': self.first_day},
+            'name': {'$regex': r'\d{4}-\d{2}-\d{2}_pastebin_[a-zA-Z0-9_]*\.txt'}
+        }):
+            recent_leak = Source.from_document(recent_leak)
+            self.recent_leaks.append(recent_leak)
+        self.recent_leaks.sort(key=lambda x: x.size, reverse=True)
+        self.total_accounts = sum([l.size for l in self.recent_leaks])
+
+        self.domains = dict()
+        for day in range(self.days):
+            date = datetime.now() - timedelta(days=day)
+            date = date.isoformat(timespec='hours').split('T')[0]
+            report_filename = Path(self.pastebin.save_dir / f'{date}_pastebin_unique_accounts.txt')
+            if report_filename.is_file():
+                try:
+                    leak = Leak()
+                    leak.read(report_filename, strict=False, unattended=True)
+                    for account in leak:
+                        domain = account.email.split(b'@')[-1].decode()
+                        try:
+                            self.domains[domain] += 1
+                        except KeyError:
+                            self.domains[domain] = 1
+
+                except QuickParseError as e:
+                    log.error(str(e))
+                    continue
+
+        self.domains = list(self.domains.items())
+        self.domains.sort(key=lambda x: x[-1], reverse=True)
+        self.total_unique_accounts = sum([d[-1] for d in self.domains])
+
+
+
+    def report(self):
+
+        report_lines = []
+
+        report_lines.append('=' * 80)
+        report_lines.append(f'UNIQUE ACCOUNTS BY DOMAIN (DOMAINS: {len(self.domains):,} / UNIQUE ACCOUNTS: {self.total_unique_accounts:,})')
+        report_lines.append('=' * 80)
+        report_lines.append(f'{"Accounts":<15}Domain')
+        l = int(self.limit)
+        for domain, count in self.domains:
+            if count > 1:
+                report_lines.append(f'{count:<15,.0f}{domain}')
+                l -= 1
+                if l <= 1:
+                    break
+
+        report_lines.append('=' * 80)
+        report_lines.append(f'TOP {self.limit:,} LEAKS IN THE PAST {self.days:,} DAYS (LEAKS: {len(self.recent_leaks):,} / ACCOUNTS: {self.total_accounts:,})')
+        report_lines.append('=' * 80)
+        report_lines.append(f'{"Size":<15}Leak Name')
+        l = int(self.limit)
+        for recent_leak in self.recent_leaks:
+            report_lines.append(str(recent_leak))
+            l -= 1
+            if l <= 1:
+                break
+
+        return report_lines
+
+
+    def html_report(self):
+
+        html = f'''
+        <html style="background-color: black; color: white">
+            <head>
+                <h2 style="font-weight: bold">c r e d s h e d</h2>
+                <h3>Scraping Report</h3>
+                <hr>
+            </head>
+            <body>
+                {self.pie_unique_accounts().to_html()}
+                <code>
+                    <pre>
+{"<br>".join(self.report())}
+                    </pre>
+                </code>
+            </body>
+        </html>
+        '''
+
+        return html
+
+
+    def pie_unique_accounts(self):
+
+        import plotly.graph_objects as go
+
+        labels = [d[0] for d in self.domains[:self.limit]]
+        values = [d[-1] for d in self.domains[:self.limit]]
+
+        # Use `hole` to create a donut-like pie chart
+        fig = go.Figure(data=[go.Pie(labels=labels, values=values, hole=.3)])
+        fig.layout.title = 'Unique Accounts by Domain'
+        fig.layout.template = 'plotly_dark'
+
+        return fig
+
+
+    def email(self, to):
+
+        assert Paste.email_regex.match(to), f'Invalid email: "{to}"'
+
+        import mimetypes
+        from email.utils import make_msgid
+        from email.message import EmailMessage
+
+        msg = EmailMessage()
+
+        # generic email headers
+        msg['Subject'] = f'CredShed Scraping Report {datetime.now().isoformat(timespec="hours").split("T")[0]}'
+        msg['From'] = 'The CredShed <scraping@credshed.com>'
+        msg['To'] = f'<{to}>'
+
+        # set the plain text body
+        msg.set_content('\n'.join(self.report()))
+
+        # now create a Content-ID for the image
+        image_cid = make_msgid(domain='credshed.com')
+
+        # set an alternative html body
+        msg.add_alternative(f"""\
+        <html>
+          <body>
+            <img src="cid:{image_cid[1:-1]}">
+          </body>
+          <p>
+            <pre>
+              <code>
+                {self.report()}
+              </code>
+            </pre>
+          </p>
+        </html>
+        """, subtype='html')
+        # image_cid looks like <long.random.number@xyz.com>
+        # to use it as the img src, we don't need `<` or `>`
+        # so we use [1:-1] to strip them off
+
+        # now open the image and attach it to the email
+        '''
+        with open('path/to/image.jpg', 'rb') as img:
+
+            # know the Content-Type of the image
+            maintype, subtype = mimetypes.guess_type(img.name)[0].split('/')
+
+            # attach it
+            msg.get_payload()[1].add_related(img.read(), maintype=maintype, subtype=subtype, cid=image_cid)
+        '''
+
+        # the message is ready now
+        # you can write it to a file
+        # or send it using smtplib
+
+        print(dir(msg))

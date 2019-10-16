@@ -36,8 +36,15 @@ def main(options):
         sys.exit(1)
 
     pastebin = Pastebin(cred_shed, options.loop_delay, options.scrape_limit, options.save_dir, (not options.dont_save))
-    if options.report:
-        pastebin.report(days=options.report_days, limit=options.report_limit)
+    if options.report or options.html_report or options.email_report:
+        report = PasteBinReport(pastebin, days=options.report_days, limit=options.report_limit)
+        if options.report:
+            for line in report.report():
+                print(line)
+        elif options.html_report:
+            print(report.html_report())
+        if options.email_report:
+            report.email(to=options.email_report)
     else:
         pastebin.monitor()
 
@@ -60,6 +67,8 @@ if __name__ == '__main__':
     parser.add_argument('--no-metadata',                action='store_true',                help='disable metadata database')
     parser.add_argument('--metadata-only',              action='store_true',                help='when importing, only import metadata')
     parser.add_argument('--report',                     action='store_true',                help='summarize recent pastes')
+    parser.add_argument('--html-report',                action='store_true',                help='summarize recent pastes in HTML')
+    parser.add_argument('--email-report',       type=str,                                   help='send report to this email address')
     parser.add_argument('--report-days',        type=int,   default=default_report_days,    help=f'how may days to go back (default {default_report_days})')
     parser.add_argument('--report-limit',       type=int,   default=default_report_limit,   help=f'limit report size (default {default_report_limit})')
     parser.add_argument('--debug',                      action='store_true',                help='display debugging info')
