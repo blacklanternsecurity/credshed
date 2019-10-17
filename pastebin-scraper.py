@@ -68,7 +68,7 @@ if __name__ == '__main__':
     parser.add_argument('--metadata-only',              action='store_true',                help='when importing, only import metadata')
     parser.add_argument('--report',                     action='store_true',                help='summarize recent pastes')
     parser.add_argument('--html-report',                action='store_true',                help='summarize recent pastes in HTML')
-    parser.add_argument('--email-report',       type=str,                                   help='send report to this email address')
+    parser.add_argument('--email-report',       type=str,   nargs='+',                      help='send report to this email address')
     parser.add_argument('--report-days',        type=int,   default=default_report_days,    help=f'how may days to go back (default {default_report_days})')
     parser.add_argument('--report-limit',       type=int,   default=default_report_limit,   help=f'limit report size (default {default_report_limit})')
     parser.add_argument('--debug',                      action='store_true',                help='display debugging info')

@@ -2,6 +2,7 @@
 
 # by TheTechromancer
 
+import io
 import re
 import sys
 import json
@@ -265,7 +266,7 @@ class PasteBinReport():
         report_lines = []
 
         report_lines.append('=' * 80)
-        report_lines.append(f'UNIQUE ACCOUNTS BY DOMAIN (DOMAINS: {len(self.domains):,} / UNIQUE ACCOUNTS: {self.total_unique_accounts:,})')
+        report_lines.append(f'UNIQUE ACCOUNTS BY DOMAIN (TOTAL DOMAINS: {len(self.domains):,} / UNIQUE ACCOUNTS: {self.total_unique_accounts:,})')
         report_lines.append('=' * 80)
         report_lines.append(f'{"Accounts":<15}Domain')
         l = int(self.limit)
@@ -299,7 +300,7 @@ class PasteBinReport():
                 <hr>
             </head>
             <body>
-                {self.pie_unique_accounts().to_html()}
+                {self.pie_unique_accounts()}
                 <code>
                     <pre>
 {"<br>".join(self.report())}
@@ -314,6 +315,7 @@ class PasteBinReport():
 
     def pie_unique_accounts(self):
 
+        '''
         import plotly.graph_objects as go
 
         labels = [d[0] for d in self.domains[:self.limit]]
@@ -325,11 +327,41 @@ class PasteBinReport():
         fig.layout.template = 'plotly_dark'
 
         return fig
+        '''
+        import matplotlib.pyplot as plot
+
+        # Pie chart, where the slices will be ordered and plotted counter-clockwise:
+        labels = [d[0] for d in self.domains[:self.limit]]
+        values = [d[-1] for d in self.domains[:self.limit]]
+        explode = (.1,) + (0,) * (len(values) - 1)  # only "explode" the 1st slice
+
+        fig, ax = plot.subplots()
+        _, _, autotexts = ax.pie(values, explode=explode, labels=labels, startangle=90, \
+            autopct=lambda p: '{:.0f}'.format(p * sum(values) / 100))
+
+        # set label text to white
+        for autotext in autotexts:
+            autotext.set_color('white')
+
+        plot.legend(labels)
+        plot.title('Unique Accounts by Domain')
+        # equal aspect ratio ensures that pie is drawn as a circle.
+        ax.axis('equal')
+        # dark theme
+        plot.style.use('dark_background')
+        #plot.show()
+        png_bytes = io.BytesIO()
+        plot.savefig(png_bytes, format='png')
+        png_bytes.seek(0)
+
+        return png_bytes
+
+
 
 
     def email(self, to):
 
-        assert Paste.email_regex.match(to), f'Invalid email: "{to}"'
+        assert all([Paste.email_regex.match(e) for e in to]), f'Invalid email: "{e}"'
 
         import smtplib
         import mimetypes
@@ -337,11 +369,11 @@ class PasteBinReport():
         from email.message import EmailMessage
 
         msg = EmailMessage()
+        pie_png_bytes = self.pie_unique_accounts().read()
 
         # generic email headers
         msg['Subject'] = f'CredShed Scraping Report {datetime.now().isoformat(timespec="hours").split("T")[0]}'
         msg['From'] = self.pastebin.config['EMAIL ALERTS']['from']
-        msg['To'] = f'<{to}>'
 
         # set the plain text body
         msg.set_content('\n'.join(self.report()))
@@ -349,24 +381,41 @@ class PasteBinReport():
         # now create a Content-ID for the image
         image_cid = make_msgid(domain='credshed.com')
 
+        report_text = '\n'.join(self.report())
+
+        header = '\n'.join([
+            '=' * 80,
+            f'{self.total_unique_accounts:,} UNIQUE ACCOUNTS IN THE PAST {self.days:,} DAYS ({self.total_accounts:,} TOTAL)',
+            '=' * 80
+        ])
+
         # set an alternative html body
         msg.add_alternative(f"""\
-        <html style='background-color: black; color: white; font-family: "Open Sans", verdana, arial, sans-serif'>
-          <head>
-            <h2 style='font-weight: bold; font-family: SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace !important'>
-              c r e d s h e d
-            </h2>
-          </head>
-          <body>
-            <img src="cid:{image_cid[1:-1]}">
-          </body>
-          <p>
-            <pre>
-              <code>
-                {self.report()}
-              </code>
-            </pre>
-          </p>
+        <html>
+          <table bgcolor="#000000" style="color: white;padding: 1rem;">
+            <thead>
+              <tr><td>
+              <h1 style='font-family: SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace !important'>
+                  c r e d s h e d
+              </h1>
+              </td></tr>
+            </thead>
+            <tbody>
+              <tr><td>
+                <p><pre><code>
+{header}
+                </code></pre></p>
+              </td></tr>
+              <tr><td>
+                <img src="cid:{image_cid[1:-1]}">
+              </td></tr>
+              <tr><td>
+                <p><pre><code>
+{report_text}
+                </code></pre></p>
+              </td></tr>
+            </tbody>
+          </table>
         </html>
         """, subtype='html')
         # image_cid looks like <long.random.number@xyz.com>
@@ -374,13 +423,7 @@ class PasteBinReport():
         # so we use [1:-1] to strip them off
 
         # now open the image and attach it to the email
-        with open('/tmp/test.png', 'rb') as img:
-
-            # know the Content-Type of the image
-            maintype, subtype = mimetypes.guess_type(img.name)[0].split('/')
-
-            # attach it
-            msg.get_payload()[1].add_related(img.read(), maintype=maintype, subtype=subtype, cid=image_cid)
+        msg.get_payload()[1].add_related(pie_png_bytes, maintype='image', subtype='png', cid=image_cid)
 
         # the message is ready now
 
@@ -392,6 +435,8 @@ class PasteBinReport():
         s = smtplib.SMTP(mail_server, mail_port)
         s.ehlo()
         s.starttls()
-        s.login(auth_user, auth_password)
+        s.login(auth_user, auth_pass)
+        for email_address in to:
+            msg['To'] = f'<{email_address}>'
         s.send_message(msg)
         s.quit()
