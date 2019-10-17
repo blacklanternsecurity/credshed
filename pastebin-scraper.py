@@ -94,8 +94,5 @@ if __name__ == '__main__':
         errprint('\n\n[!] {}\n[!] Check your syntax'.format(str(e)))
         exit(2)
 
-    except AssertionError as e:
-        errprint('\n\n[!] {}'.format(str(e)))
-
     except KeyboardInterrupt:
         errprint('\n\n[!] Interrupted')

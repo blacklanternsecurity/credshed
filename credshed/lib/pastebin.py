@@ -331,8 +331,8 @@ class PasteBinReport():
         import matplotlib.pyplot as plot
 
         # Pie chart, where the slices will be ordered and plotted counter-clockwise:
-        labels = [d[0] for d in self.domains[:self.limit]]
-        values = [d[-1] for d in self.domains[:self.limit]]
+        labels = [d[0] for d in self.domains[:self.limit - 1]] + ['other']
+        values = [d[-1] for d in self.domains[:self.limit - 1]] + [sum([d[-1] for d in self.domains[self.limit - 1:]])]
         explode = (.1,) + (0,) * (len(values) - 1)  # only "explode" the 1st slice
 
         fig, ax = plot.subplots()
@@ -364,16 +364,11 @@ class PasteBinReport():
         assert all([Paste.email_regex.match(e) for e in to]), f'Invalid email: "{e}"'
 
         import smtplib
-        import mimetypes
         from email.utils import make_msgid
         from email.message import EmailMessage
 
         msg = EmailMessage()
         pie_png_bytes = self.pie_unique_accounts().read()
-
-        # generic email headers
-        msg['Subject'] = f'CredShed Scraping Report {datetime.now().isoformat(timespec="hours").split("T")[0]}'
-        msg['From'] = self.pastebin.config['EMAIL ALERTS']['from']
 
         # set the plain text body
         msg.set_content('\n'.join(self.report()))
@@ -402,7 +397,7 @@ class PasteBinReport():
             </thead>
             <tbody>
               <tr><td>
-                <p><pre><code>
+                <p><pre><code style="color: white">
 {header}
                 </code></pre></p>
               </td></tr>
@@ -410,7 +405,7 @@ class PasteBinReport():
                 <img src="cid:{image_cid[1:-1]}">
               </td></tr>
               <tr><td>
-                <p><pre><code>
+                <p><pre><code style="color: white">
 {report_text}
                 </code></pre></p>
               </td></tr>
@@ -428,15 +423,26 @@ class PasteBinReport():
         # the message is ready now
 
         # Send the message via our own SMTP server.
-        mail_server = self.pastebin.config['EMAIL ALERTS']['mail_server']
-        mail_port = self.pastebin.config['EMAIL ALERTS']['mail_port']
-        auth_user = self.pastebin.config['EMAIL ALERTS']['auth_user']
-        auth_pass = self.pastebin.config['EMAIL ALERTS']['auth_pass']
-        s = smtplib.SMTP(mail_server, mail_port)
-        s.ehlo()
-        s.starttls()
-        s.login(auth_user, auth_pass)
-        for email_address in to:
-            msg['To'] = f'<{email_address}>'
-        s.send_message(msg)
-        s.quit()
+        # generic email headers
+        msg['Subject'] = f'CredShed Scraping Report {datetime.now().isoformat(timespec="hours").split("T")[0]}'
+        try:
+            msg['From'] = self.pastebin.config['EMAIL ALERTS']['from']
+            mail_server = self.pastebin.config['EMAIL ALERTS']['mail_server']
+            mail_port = self.pastebin.config['EMAIL ALERTS']['mail_port']
+            auth_user = self.pastebin.config['EMAIL ALERTS']['auth_user']
+            auth_pass = self.pastebin.config['EMAIL ALERTS']['auth_pass']
+        except KeyError as e:
+            log.critical(f'Error parsing credshed.config: {e}')
+            return
+
+        try:
+            s = smtplib.SMTP(mail_server, mail_port)
+            s.ehlo()
+            s.starttls()
+            s.login(auth_user, auth_pass)
+            for email_address in to:
+                msg['To'] = f'<{email_address}>'
+            s.send_message(msg)
+            s.quit()
+        except smtplib.SMTPException as e:
+            log.critical(f'Error sending email: {e}')
