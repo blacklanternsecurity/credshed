@@ -277,8 +277,15 @@ class PasteBinReport():
                 if l <= 1:
                     break
 
-        report_lines.append('=' * 80)
-        report_lines.append(f'TOP {self.limit:,} LEAKS IN THE PAST {self.days:,} DAYS (LEAKS: {len(self.recent_leaks):,} / ACCOUNTS: {self.total_accounts:,})')
+        report_lines += self.top_leaks()
+
+        return report_lines
+
+
+    def top_leaks(self):
+
+        report_lines = ['=' * 80]
+        report_lines.append(f'TOP {self.limit:,} LEAKS IN THE PAST {self.days:,} DAYS (TOTAL: {len(self.recent_leaks):,} LEAKS / {self.total_accounts:,} ACCOUNTS)')
         report_lines.append('=' * 80)
         report_lines.append(f'{"Size":<15}Leak Name')
         l = int(self.limit)
@@ -289,28 +296,6 @@ class PasteBinReport():
                 break
 
         return report_lines
-
-
-    def html_report(self):
-
-        html = f'''
-        <html style='background-color: black; color: white; font-family: "Open Sans", verdana, arial, sans-serif'>
-            <head>
-                <h2 style='font-weight: bold; font-family: SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace !important'>c r e d s h e d</h2>
-                <hr>
-            </head>
-            <body>
-                {self.pie_unique_accounts()}
-                <code>
-                    <pre>
-{"<br>".join(self.report())}
-                    </pre>
-                </code>
-            </body>
-        </html>
-        '''
-
-        return html
 
 
     def pie_unique_accounts(self):
@@ -336,22 +321,23 @@ class PasteBinReport():
         explode = (.1,) + (0,) * (len(values) - 1)  # only "explode" the 1st slice
 
         fig, ax = plot.subplots()
-        _, _, autotexts = ax.pie(values, explode=explode, labels=labels, startangle=90, \
+        pie_chart = ax.pie(values, explode=explode, labels=labels, startangle=90, \
             autopct=lambda p: '{:.0f}'.format(p * sum(values) / 100))
 
         # set label text to white
-        for autotext in autotexts:
+        for autotext in pie_chart[2]:
             autotext.set_color('white')
 
-        plot.legend(labels)
-        plot.title('Unique Accounts by Domain')
+        plot.legend(pie_chart[0], labels, bbox_to_anchor=(1,0.5), loc="center right", bbox_transform=plot.gcf().transFigure)
+        pie_title = plot.title('Unique Accounts by Domain')
+        plot.setp(pie_title, color='w')
         # equal aspect ratio ensures that pie is drawn as a circle.
         ax.axis('equal')
         # dark theme
         plot.style.use('dark_background')
         #plot.show()
         png_bytes = io.BytesIO()
-        plot.savefig(png_bytes, format='png')
+        plot.savefig(png_bytes, format='png', edgecolor='none', bbox_inches='tight')
         png_bytes.seek(0)
 
         return png_bytes
@@ -367,6 +353,8 @@ class PasteBinReport():
         from email.utils import make_msgid
         from email.message import EmailMessage
 
+        log.info('Generating email report')
+
         msg = EmailMessage()
         pie_png_bytes = self.pie_unique_accounts().read()
 
@@ -376,7 +364,7 @@ class PasteBinReport():
         # now create a Content-ID for the image
         image_cid = make_msgid(domain='credshed.com')
 
-        report_text = '\n'.join(self.report())
+        top_leaks = '\n'.join(self.report())
 
         header = '\n'.join([
             '=' * 80,
@@ -406,7 +394,7 @@ class PasteBinReport():
               </td></tr>
               <tr><td>
                 <p><pre><code style="color: white">
-{report_text}
+{top_leaks}
                 </code></pre></p>
               </td></tr>
             </tbody>
@@ -436,13 +424,16 @@ class PasteBinReport():
             return
 
         try:
+            log.info('Connecting to email server')
             s = smtplib.SMTP(mail_server, mail_port)
             s.ehlo()
             s.starttls()
             s.login(auth_user, auth_pass)
             for email_address in to:
+                log.info(f'Sending email to {email_address}')
                 msg['To'] = f'<{email_address}>'
             s.send_message(msg)
             s.quit()
+            log.info('Finished sending email')
         except smtplib.SMTPException as e:
             log.critical(f'Error sending email: {e}')
