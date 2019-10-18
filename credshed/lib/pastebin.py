@@ -364,7 +364,7 @@ class PasteBinReport():
         # now create a Content-ID for the image
         image_cid = make_msgid(domain='credshed.com')
 
-        top_leaks = '\n'.join(self.pie_unique_accounts())
+        top_leaks = '\n'.join(self.top_leaks())
 
         header = '\n'.join([
             '=' * 80,
