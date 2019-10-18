@@ -2,7 +2,7 @@
 A full-featured solution for injesting, organizing, storing, and querying public credential leaks.  Injests gigantic files or entire directories with ease.  (It will find every email address in your `/etc` directory if you tell it to!)
 Includes native Pastebin-scraping functionality.
 
-![credshed-gui-screenshot](images.githubusercontent.com/20261699/67125567-1d0fc400-f1c3-11e9-850c-b3baa620e791.png)
+![credshed-gui-screenshot](https://user-images.githubusercontent.com/20261699/67125567-1d0fc400-f1c3-11e9-850c-b3baa620e791.png)
 Pastebin Scraper Report
 
 ## CLI Usage
