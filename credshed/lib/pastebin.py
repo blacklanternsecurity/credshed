@@ -220,6 +220,8 @@ class PasteBinReport():
 
     def __init__(self, pastebin, days=30, limit=20):
 
+        log.info('Generating Pastebin report')
+
         self.pastebin = pastebin
         self.days = days
         self.limit = limit
@@ -353,8 +355,6 @@ class PasteBinReport():
         from email.utils import make_msgid
         from email.message import EmailMessage
 
-        log.info('Generating email report')
-
         msg = EmailMessage()
         pie_png_bytes = self.pie_unique_accounts().read()
 
@@ -364,7 +364,7 @@ class PasteBinReport():
         # now create a Content-ID for the image
         image_cid = make_msgid(domain='credshed.com')
 
-        top_leaks = '\n'.join(self.report())
+        top_leaks = '\n'.join(self.pie_unique_accounts())
 
         header = '\n'.join([
             '=' * 80,
