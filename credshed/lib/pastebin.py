@@ -121,12 +121,15 @@ class Pastebin():
 
         # import API result as JSON
         decoded = raw.read().decode('utf-8')
-        try:
-            json_results = json.loads(decoded)
-        except json.decoder.JSONDecodeError as e:
-            log.error(f'JSON parsing error: {e}')
-            log.error(str(decoded))
-            sys.exit(1)
+        while 1:
+            try:
+                json_results = json.loads(decoded)
+                break
+            except json.decoder.JSONDecodeError as e:
+                log.error(f'JSON parsing error: {e}')
+                log.error(str(decoded))
+                log.info('Sleeping for 10 minutes')
+                sleep(600)
 
         if not self.ref_id:
             json_results = json_results[:self.scrape_limit]
@@ -238,7 +241,7 @@ class PasteBinReport():
         self.total_accounts = sum([l.size for l in self.recent_leaks])
 
         self.domains = dict()
-        for day in range(self.days):
+        for day in range(self.days+2):
             date = datetime.now() - timedelta(days=day)
             date = date.isoformat(timespec='hours').split('T')[0]
             report_filename = Path(self.pastebin.save_dir / f'{date}_pastebin_unique_accounts.txt')
