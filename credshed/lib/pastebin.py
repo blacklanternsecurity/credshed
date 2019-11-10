@@ -128,8 +128,10 @@ class Pastebin():
             except json.decoder.JSONDecodeError as e:
                 log.error(f'JSON parsing error: {e}')
                 log.error(str(decoded))
-                log.info('Sleeping for 10 minutes')
-                sleep(600)
+                # sleep for a while if we're exceeding the query limit
+                if 'slow down' in str(decoded).lower():
+                    log.info('Sleeping for 20 minutes')
+                    sleep(1200)
 
         if not self.ref_id:
             json_results = json_results[:self.scrape_limit]
