@@ -1,4 +1,4 @@
-#!/usr/bin/env python3.7
+#!/usr/bin/env python3
 
 # by TheTechromancer
 
@@ -7,7 +7,7 @@ import logging
 import threading
 from .db import DB
 from .leak import *
-import configparser
+from .util import *
 from .errors import *
 import pymongo.errors
 from time import sleep
@@ -18,6 +18,13 @@ from datetime import datetime
 
 
 class CredShed():
+    '''
+    Main class for interacting with credshed
+    Contains useful methods such as:
+        .search()
+        .import()
+        ...
+    '''
 
     def __init__(self, output='__db__', unattended=False, metadata=None, metadata_only=False, deduplication=False, threads=2):
 
@@ -29,7 +36,7 @@ class CredShed():
         try:
             self.db = DB(use_metadata=metadata, metadata_only=metadata_only)
         except pymongo.errors.ServerSelectionTimeoutError as e:
-            raise CredShedTimeoutError('Connection to database timed out: {}'.format(str(e)))
+            raise CredShedTimeoutError(f'Connection to database timed out: {e}')
 
         self.threads = threads
         self.output = Path(output)
@@ -53,7 +60,7 @@ class CredShed():
             logging.basicConfig(level=log_level, filename=log_file, format=log_format)
         except (PermissionError, FileNotFoundError):
             logging.basicConfig(level=log_level, filename='credshed.log', format=log_format)
-            errprint('[!] Unable to create log file at {}, logging to current directory'.format(log_file))
+            errprint(f'[!] Unable to create log file at {log_file}, logging to current directory')
         self.log = logging.getLogger('credshed')
         self.log.setLevel(log_level)
 
@@ -425,43 +432,3 @@ class CredShed():
                     self.log.info(f'UNIQUE ACCOUNT: {self.unique_account_queue.get_nowait()}')
             except queue.Empty:
                 sleep(.1)
-
-
-
-
-
-def parse_config():
-
-    # parse config file
-    config_filename = Path(__file__).resolve().parent.parent / 'credshed.config'
-    if not config_filename.is_file():
-        raise CredShedConfigError('Unable to find credshed config at {}'.format(config_filename))
-
-    config = configparser.ConfigParser()
-    config.read(str(config_filename))
-
-    return config
-
-
-def number_range(s):
-    '''
-    takes array of strings and tries to convert into an array of ints
-    '''
-
-    n_array = set()
-
-    for a in s:
-        for r in a.split(','):
-            try:
-                if '-' in r:
-                    start, end = [int(i) for i in r.split('-')[:2]]
-                    n_array = n_array.union(set(list(range(start, end+1))))
-                else:
-                    n_array.add(int(r))
-
-            except (IndexError, ValueError):
-                sys.stderr.write('[!] Error parsing source ID "{}"'.format(a))
-                continue
-
-    return n_array
-

@@ -1,4 +1,4 @@
-#!/usr/bin/env python3.7
+#!/usr/bin/env python3
 
 # by TheTechromancer
 
@@ -8,13 +8,13 @@ import hashlib
 import logging
 import pymongo
 import traceback
-import configparser
 from .leak import *
 from .util import *
 from .errors import *
 from time import sleep
 import multiprocessing
 from pathlib import Path
+from .config import credshed_config
 from datetime import datetime, timedelta
 
 
@@ -27,8 +27,7 @@ class DB():
 
         self.metadata_only = metadata_only
         
-        from .core import parse_config
-        self.config = parse_config()
+        self.config = credshed_config
 
         try:
 
@@ -38,8 +37,8 @@ class DB():
                 main_server = self.config['MONGO PRIMARY']['server']
                 main_port = int(self.config['MONGO PRIMARY']['port'])
                 main_db = self.config['MONGO PRIMARY']['db']
-                self.mongo_user = self.config['GLOBAL']['user']
-                self.mongo_pass = self.config['GLOBAL']['pass']
+                self.mongo_user = self.config['MONGO GLOBAL']['user']
+                self.mongo_pass = self.config['MONGO GLOBAL']['pass']
             except KeyError as e:
                 raise CredShedConfigError(str(e))
 

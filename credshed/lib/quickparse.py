@@ -1,4 +1,4 @@
-#!/usr/bin/env python3.7
+#!/usr/bin/env python3
 
 # by TheTechromancer
 
@@ -238,7 +238,8 @@ class QuickParse():
             translated_lines = []
             for line in all_lines:
                 try:
-                    translated_lines.append(str(self.translate_line(line)))
+                    for account in self.translate_line(line):
+                        translated_lines.append(str(account))
                 except AccountCreationError as e:
                     self.log.debug(str(e))
                     continue
@@ -326,8 +327,10 @@ class QuickParse():
     def translate_line(self, line):
         '''
         polite and picky function which takes a line and maps its fields exactly as declared in self.mapping
-        returns an Account() object
+        yields Account() objects
         '''
+
+        self.log.debug(f'TRANSLATING {line}')
 
         try:
 
@@ -347,10 +350,11 @@ class QuickParse():
 
 
             email, username, password, _hash, misc = line_new
-            return Account(email, username, password, _hash, misc)
+            yield Account(email, username, password, _hash, misc)
 
         except AccountCreationError as e:
-            return self.absorb_line(line)
+            for account in self.absorb_line(line):
+                yield account
 
 
 
@@ -361,28 +365,37 @@ class QuickParse():
         returns an Account() object
         '''
 
-        line = line[:self.max_line_length]
+        self.log.debug(f'ABSORBING {line}')
 
         # try the common email:password format
         try:
             email, password = self._split_line(line, delimiter=b':')
-            return Account(email=email, password=password, strict=True)
+            yield Account(email=email, password=password[:self.max_line_length], strict=True)
 
         # if that fails, ABSORB
         except (ValueError, AccountCreationError) as e:
             #self.log.debug(str(e))
 
-            email_match = Account.email_regex_search_bytes.search(line)
+            email_scanner = Account.email_regex_search_bytes.scanner(line)
 
-            if email_match:
-                email = line[email_match.start():email_match.end()]
-                # strip out email and replace with "@"
-                line = line.replace(email, b'@')
-                if len(line) > 2:
-                    # only use the last 511 characters
-                    return Account(email=email, misc=line[-511:])
+            while 1:
+
+                match = email_scanner.search()
+                if not match:
+                    break
+
                 else:
-                    return Account(email=email)
+                    startpos, endpos = match.span()
+                    email = line[startpos:endpos]
+
+                    # take the closest 500 characters
+                    left_side = line[max(0, startpos-250):startpos]
+                    right_side = line[endpos:endpos+250]
+
+                    if len(left_side) + len(right_side) > 2:
+                        yield Account(email=email, misc=left_side + b'@' + right_side)
+                    else:
+                        yield Account(email=email)
 
         # if we got here, this line doesn't deserve to live
         raise LineAbsorptionError('Unable to parse line: {}'.format(str(line)[:80]))
@@ -629,9 +642,11 @@ class QuickParse():
                     line = line[0:self.max_line_length].strip(b'\r\n')
                     try:
                         if self.strict:
-                            yield self.translate_line(line)
+                            for account in self.translate_line(line):
+                                yield account
                         else:
-                            yield self.absorb_line(line)
+                            for account in self.absorb_line(line):
+                                yield account
                     except LineAbsorptionError:
                         continue
                     except AccountCreationError as e:

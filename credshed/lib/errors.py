@@ -1,4 +1,4 @@
-#!/usr/bin/env python3.7
+#!/usr/bin/env python3
 
 # by TheTechromancer
 
@@ -36,4 +36,19 @@ class DelimiterError(QuickParseError):
     pass
 
 class FieldDetectionError(QuickParseError):
+    pass
+
+
+# Filestore-specific
+
+class FilestoreError(CredShedError):
+    pass
+
+class FilestoreHashError(FilestoreError):
+    pass
+
+class FilestoreOrphanError(FilestoreError):
+    pass
+
+class FilestoreMetadataError(FilestoreError):
     pass

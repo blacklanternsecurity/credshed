@@ -288,7 +288,13 @@ services:" | tee -a docker-compose.yml
     echo "
 networks:
     mongo_main:
-    mongo_meta:" | tee -a docker-compose.yml
+        ipam:
+            config:
+            - subnet: 172.27.0.0/24
+    mongo_meta:
+        ipam:
+            config:
+            - subnet: 172.27.1.0/24" | tee -a docker-compose.yml
 
     # protect docker-compose.yml
     sudo chown root:root docker-compose.yml

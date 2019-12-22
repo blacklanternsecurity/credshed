@@ -1,4 +1,4 @@
-#!/usr/bin/env python3.7
+#!/usr/bin/env python3
 
 # by TheTechromancer
 
@@ -85,7 +85,7 @@ class Pastebin():
 
     def __init__(self, credshed, loop_delay=60, scrape_limit=100, save_dir=None, keep_pastes=True):
 
-        from .core import parse_config
+        from .core import read_config
 
         self.credshed = credshed
         self.ref_id = None
@@ -95,7 +95,7 @@ class Pastebin():
         self.keep_pastes = keep_pastes
         self.scrape_limit = scrape_limit
         self.session = requests.Session()
-        self.config = parse_config()
+        self.config = read_config()
 
         if save_dir is None:
             save_dir = Path.cwd()

@@ -6,7 +6,7 @@ After=credshed.service
 [Service]
 User=root
 WorkingDirectory=/opt/credshed
-ExecStart=/usr/bin/env python3.7 pastebin-scraper.py
+ExecStart=/usr/bin/env python3 pastebin-scraper.py
 Restart=always
 
 [Install]

@@ -1,4 +1,4 @@
-#!/usr/bin/env python3.7
+#!/usr/bin/env python3
 
 # by TheTechromancer
 
@@ -26,7 +26,7 @@ from multiprocessing import cpu_count
 log = logging.getLogger('credshed.cli')
 log.setLevel(logging.DEBUG)
 
-# log INFO and up to stderr
+# log to stderr
 console = logging.StreamHandler()
 console.setLevel(logging.DEBUG)
 # set a format which is simpler for console use
@@ -242,15 +242,12 @@ if __name__ == '__main__':
         main(options)
 
     except AssertionError as e:
-        errprint('\n\n[!] {}\n'.format(str(e)))
+        errprint(f'\n\n[!] {e}\n')
         sys.exit(2)
 
     except argparse.ArgumentError as e:
-        errprint('\n\n[!] {}\n[!] Check your syntax'.format(str(e)))
+        errprint(f'\n\n[!] {e}\n[!] Check your syntax')
         sys.exit(2)
-
-    except AssertionError as e:
-        errprint('\n\n[!] {}'.format(str(e)))
 
     except (KeyboardInterrupt, BrokenPipeError):
         errprint('\n\n[!] Interrupted')

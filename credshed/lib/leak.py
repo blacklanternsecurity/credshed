@@ -1,4 +1,4 @@
-#!/usr/bin/env python3.7
+#!/usr/bin/env python3
 
 # by TheTechromancer
 
@@ -23,8 +23,8 @@ class Account():
     email_regex = re.compile(r'^([A-Z0-9_\-\.\+]+)@([A-Z0-9_\-\.]+)\.([A-Z]{2,8})$', re.I)
     # same thing but for raw bytes
     email_regex_bytes = re.compile(rb'^([A-Z0-9_\-\.\+]+)@([A-Z0-9_\-\.]+)\.([A-Z]{2,8})$', re.I)
-    # for searching for email in string
-    email_regex_search_bytes = re.compile(rb'([A-Z0-9_\-\.\+]+)@([A-Z0-9_\-\.]+)\.([A-Z]{2,8})', re.I)
+    # for searching for email in bytes
+    email_regex_search_bytes = re.compile(rb'[A-Z0-9_\-\.\+]+@[A-Z0-9_\-\.]+\.[A-Z]{2,8}', re.I)
     # less-strict version
     fuzzy_email_regex = re.compile(r'^(.+)@(.+)\.(.+)')
     # same thing but for raw bytes
