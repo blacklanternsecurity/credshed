@@ -3,17 +3,19 @@
 # by TheTechromancer
 
 import os
+import sys
 import logging
 import threading
 from .db import DB
-from .leak import *
 from .util import *
 from .errors import *
+from .parser import *
+from .source import *
 import pymongo.errors
 from time import sleep
 from queue import Queue
-from .quickparse import *
 from datetime import datetime
+from .injestor import Injestor
 
 
 
@@ -26,29 +28,20 @@ class CredShed():
         ...
     '''
 
-    def __init__(self, output='__db__', unattended=False, metadata=None, metadata_only=False, deduplication=False, threads=2):
+    def __init__(self, stdout=False, unattended=False, deduplication=False, threads=2):
 
-        # if metadata = None, 
-        self.metadata = metadata
-        self.metadata_only = metadata_only
-        self.unique_account_queue = Queue()
+        self.stdout = stdout
 
         try:
-            self.db = DB(use_metadata=metadata, metadata_only=metadata_only)
+            self.db = DB()
         except pymongo.errors.ServerSelectionTimeoutError as e:
             raise CredShedTimeoutError(f'Connection to database timed out: {e}')
 
         self.threads = threads
-        self.output = Path(output)
         self.unattended = unattended
         self.deduplication = deduplication
 
         self.errors = []
-
-        # overwrite output file
-        if not self.output.name == '__db__':
-            with open(str(self.output), 'w') as f:
-                f.write('')
 
         self.STOP = False
 
@@ -102,286 +95,42 @@ class CredShed():
 
 
 
-    def import_files(self, files, show_unique=True, quiet=False):
-        '''
-        takes a single file or directory, or a list of files/directories to import
-        show_unique - auto-empty the unique_account_queue
-        quiet - don't display unique accounts
-        '''
+    def delete_source(self, source_id):
 
-        # make sure "files" is an iterable
-        if type(files) == str:
-            files = [Path(files)]
-        else:
-            try:
-                list(files)
-            except TypeError:
-                files = [files]
+        self.db.delete_source(int(source_id))
 
-        to_add = set()
-        for file in files:
-            if file.is_file():
-                to_add.add((file, None))
-            elif file.is_dir():
-                # get recursive file listing
-                to_add.update(set(self._get_leak_files(file)))
-            else:
-                self.log.warning(f'Invalid file/directory to import: {file}')
-                continue
 
-        # if we're importing a lot of files, parallelize
-        if len(to_add) > 1 and self.unattended and str(self.output) == '__db__':
 
-            start_time = datetime.now()
+    def import_file(self, filename):
 
-            file_threads = max(1, int(self.threads / 2))
-            self.threads = 2
+        source = Source(filename)
+        source.parse(unattended=self.unattended)
 
-            pool = [None] * file_threads
-            self.log.info('{:,} files detected, adding in parallel ({} thread(s), {} process(es) per file)'.format(len(to_add), file_threads, self.threads))
-
-            # print unique accounts if requested
-            if show_unique:
-                threading.Thread(target=self._tail_unique_account_queue, args=(quiet,), daemon=True).start()
-
-            try:
-                completed = 0
-                for l in to_add:
-
-                    if self.STOP:
-                        break
-
-                    while not self.STOP:
-                        try:
-                            for i in range(len(pool)):
-
-                                try:
-                                    if pool[i].is_alive():
-                                        continue
-                                    else:
-                                        completed += 1
-                                        time_elapsed = datetime.now() - start_time
-                                        self.log.info('{:,}/{:,} ({:.1f}%) files completed in {}'.format(completed, len(to_add), (completed/len(to_add)*100), str(time_elapsed).split('.')[0]))
-
-                                except AttributeError:
-                                    pass
-                                    
-                                pool[i] = threading.Thread(target=self._add_by_file, name=str(l[0]), args=(l,))
-                                pool[i].start()
-                                # break out of infinite loop
-                                assert False
-
-                            sleep(.1)
-
-                        except AssertionError:
-                            break
-
-                active_threads = []
-                for t in pool:
-                    try:
-                        if t.is_alive():
-                            active_threads.append(str(t))
-                    except AttributeError:
-                        continue
-
-                self.log.info('Reached end, waiting for {:,} active threads to finish'.format(len(active_threads)))
-
-                while not all([t is None for t in pool]):
-                    for i in range(len(pool)):
-                        if pool[i] is not None:
-                            if not pool[i].is_alive():
-                                completed += 1
-                                time_elapsed = datetime.now() - start_time
-                                self.log.info('{:,}/{:,} ({:.1f}%) files completed in {}'.format(completed, len(to_add), (completed/len(to_add)*100), str(time_elapsed).split('.')[0]))
-                                pool[i] = None
-                                continue
-                            else:
-                                self.log.debug('Waiting on thread {}'.format(pool[i].name))
-                    sleep(1)
-
-            except KeyboardInterrupt:
-                self.STOP = True
-                raise
-            '''
-            futures = []
-
-            file_thread_executor = concurrent.futures.ThreadPoolExecutor(max_workers=file_threads)
-            try:
-                for l in to_add:
-                    futures.append(file_thread_executor.submit(self._add_by_file, l))
-
-                completed = 0
-                for future in concurrent.futures.as_completed(futures):
-                    completed += 1
-                    self.log.info('\n>> {:,} FILES COMPLETED <<\n'.format(completed))
-
-            except KeyboardInterrupt:
-                for future in futures:
-                    future.cancel()
-            finally:
-                file_thread_executor.shutdown(wait=False)
-            '''
+        if self.stdout:
+            for account in source:
+                sys.stdout.buffer.write(account.bytes + b'\n')
 
         else:
-            self.log.info(f'{len(to_add):,} files detected, importing using {self.threads:,} threads')
-            completed = 0
-
-            for l in to_add:
-                start_time = datetime.now()
-
-                file, _dir = l
-                self.log.info(f'Importing {file}')
-    
-                self._add_by_file(l)
-                completed += 1
-
-                time_elapsed = datetime.now() - start_time
-                self.log.info('{:,}/{:,} ({:.1f}%) files completed in {}'.format(completed, len(to_add), (completed/len(to_add)*100), str(time_elapsed).split('.')[0]))
-
-
-        if self.unattended and self.errors:
-            e = 'Errors encountered:\n\t'
-            e += '\n\t'.join(self.errors)
-            self.log.info(e)
-
-
-
-    def delete_leak(self, source_id):
-
-        self.db.delete_leak(int(source_id))
-
-
-
-
-    def _add_by_file(self, dir_and_file, max_tries=5):
-        '''
-        takes iterable of directories and files in the format:
-        [
-            (leak_dir, leak_file)
-            ...
-        ]
-        '''
-
-        # initialize database
-
-        while ( (not self.STOP) and (max_tries > 0) ):
 
             try:
+                injestor = Injestor(source, threads=self.threads)
+                injestor.injest()
 
-                # if leak_file is None, assume leak_dir is just a standalone file
-                if dir_and_file[1] is None:
-                    leak_file = dir_and_file[0]
-                    # keep first parent directory only
-                    leak_friendly_name = leak_file.name
+            except KeyboardInterrupt:
+                if self.unattended:
+                    raise
                 else:
-                    leak_dir, leak_friendly_name = dir_and_file
-                    leak_file = leak_dir / leak_friendly_name
-
-                try:
-
-                    db = DB(use_metadata=self.metadata, metadata_only=self.metadata_only)
-                    q = QuickParse(file=leak_file, source_name=leak_friendly_name, unattended=self.unattended)
-
-                except KeyboardInterrupt:
-                    if self.unattended:
+                    self.log.info(f'Skipping {filename}')
+                    try:
+                        sleep(1)
+                    except KeyboardInterrupt:
+                        self.log.info(f'Cancelling import')
                         raise
-                    else:
-                        self.log.info('Skipping {}'.format(str(leak_file)))
-                        return
-
-                leak = Leak(q.source_name, q.source_hashtype, q.source_misc)
-
-                # if we're writing to the database, handle duplicate source
-                if self.output.name == '__db__':
-                    try:
-                        # see if source already exists
-                        source_already_in_db = db.sources.find_one(leak.source.document(misc=False, date=False))
-
-                        if source_already_in_db:
-                            source_id, source_name = source_already_in_db['_id'], source_already_in_db['name']
-                            if not self.unattended:
-                                answer = input('Source ID {} ({}) already exists, merge? (Y/n)'.format(source_id, source_name)) or 'y'
-                                if not answer.lower().startswith('y'):
-                                    self.log.info('Skipping existing source ID {} ({})'.format(source_id, source_name))
-                                    return
-                                self.log.warning('Merging {} with existing source ID {} ({})'.format(leak_file, source_id, source_name))
-
-                    except pymongo.errors.PyMongoError as e:
-                        error = str(e)
-                        try:
-                            error += str(e.details)
-                        except AttributeError:
-                            pass
-                        if error:
-                            self.log.error(error)
-                        self.STOP = True
-                        break
-
-                if not self.deduplication:
-                    # override set with generator
-                    leak.accounts = q.__iter__()
-
-                else:
-                    account_counter = 0
-                    self.log.info('Deduplicating accounts')
-                    for account in q:
-                        if not self.STOP:
-                            #self.log.info(str(account))
-                            #try:
-                            leak.add_account(account)
-                            #except ValueError:
-                            #    continue
-                            account_counter += 1
-                            if account_counter % 1000 == 0 and not self.unattended:
-                                sys.stderr.write('\r[+] {:,} '.format(account_counter), end='')
-
-                    if not self.unattended:
-                        sys.stderr.write('\r[+] {:,}'.format(account_counter))
-                    self.log.info('{:,} accounts deduplicated for {}'.format(account_counter, leak_file))
+                    return
 
 
-                if self.output.name == '__db__':
 
-                    #print('\nAdding:\n{}'.format(str(leak)))
-                    #file_thread_executor.submit(db.add_leak, leak, num_threads=options.threads)
-                    #self.log.info('[{}] Calling db.add_leak()'.format(dir_and_file))
-                    for unique_account in db.add_leak(leak, num_child_processes=self.threads):
-                        #self.log.debug(f'Queueing account {unique_account}')
-                        self.unique_account_queue.put(unique_account)
-                    #self.log.info('[{}] Finished calling db.add_leak()'.format(dir_and_file))
-
-                else:
-                    self.log.info('Writing leak {} to {}'.format(leak_file, str(self.output)))
-                    # open file in append mode because we may be parsing more than one file
-                    with open(str(self.output), 'ab') as f:
-                        for account in leak:
-                            #self.log.info(str(account))
-                            f.write(account.bytes + b'\n')
-                    #leak.dump()
-
-            except QuickParseError as e:
-                self.log.error('{}'.format(str(e)))
-                break
-
-            except CredShedDatabaseError as e:
-                self.log.error(str(e))
-                max_tries -= 1
-                continue
-
-            except AssertionError as e:
-                break
-
-            finally:
-                try:
-                    db.close()
-                    # self.comms_queue.put('[+] Finished adding {}'.format(leak_file))
-                except UnboundLocalError:
-                    pass
-
-            break
-
-
-    def _get_leak_dirs(self, path):
+    def _get_source_dirs(self, path):
         '''
         takes directory
         walks tree, stops walking and yields directory when it finds a file
@@ -395,40 +144,30 @@ class CredShed():
                 yield path
             else:
                 for d in dir_list:
-                    for p in self._get_leak_dirs(path / d):
+                    for p in self._get_source_dirs(path / d):
                         yield p
         except StopIteration:
             pass
 
 
-    def _get_leak_files(self, path):
+    def _get_source_files(self, path):
         '''
         takes directory
         yields:
         [
-            (leak_dir, leak_file)
+            (source_dir, source_file)
             ...
         ]
 
         each directory and file represent a full path when concatenated
             e.g.:
-                leak_dir / leak_file
+                source_dir / source_file
         '''
 
-        leak_dirs = {}
+        source_dirs = {}
 
-        for d in self._get_leak_dirs(path):
-            leak_files = []
+        for d in self._get_source_dirs(path):
+            source_files = []
             for dir_name, dir_list, file_list in os.walk(d):
                 for file in file_list:
                     yield (d.parent, (Path(dir_name) / file).relative_to(d.parent))
-
-
-    def _tail_unique_account_queue(self, quiet=False):
-
-        while not self.STOP:
-            try:
-                if not quiet:
-                    self.log.info(f'UNIQUE ACCOUNT: {self.unique_account_queue.get_nowait()}')
-            except queue.Empty:
-                sleep(.1)

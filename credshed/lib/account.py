@@ -2,14 +2,40 @@
 
 # by TheTechromancer
 
+
 import re
-import sys
 import base64
 import hashlib
 from .util import *
 from .errors import *
-from pathlib import Path
-from datetime import datetime
+
+
+
+
+class AccountMetadata():
+
+    def __init__(self, sources):
+
+        self.sources = sources
+
+
+    def __str__(self):
+
+        s = ''
+        s += '\n'.join([' |- {}'.format(str(source)) for source in self.sources])
+        return s
+
+
+    def __iter__(self):
+
+        for source in self.sources:
+            yield source
+
+
+    def __len__(self):
+
+        return len(self.sources)
+
 
 
 
@@ -63,7 +89,7 @@ class Account():
 
         elif not self.is_email(self.email):
                 if strict:
-                    raise AccountCreationError('Email validation failed on "{}" and strict mode is enabled.'.format(str(email)))
+                    raise AccountCreationError(f'Email validation failed on "{email}" and strict mode is enabled.')
                 elif not self.username:
                     self.email, self.username = self.username, self.email
 
@@ -77,7 +103,7 @@ class Account():
         # allows searching for additional information in the raw dump
         if not (self.email or (self.username and (self.password or self.misc))):
             # print(email, username, password, _hash, misc)
-            raise AccountCreationError('Not enough information to create account:\n{}'.format(str(self)[:64]))
+            raise AccountCreationError(f'Not enough information to create account:\n{str(self)[:64]}')
 
         # truncate values if longer than max length
         self.email = clean_encoding(self.email)[-self.max_length_1:]
@@ -112,7 +138,7 @@ class Account():
                 if self.misc:
                     doc['misc'] = decode(self.misc)
         except ValueError:
-            raise AccountCreationError('[!] Error formatting {}'.format(str(self.bytes)[:64]))
+            raise AccountCreationError(f'[!] Error formatting {str(self.bytes)[:64]}')
 
         return doc
 
@@ -126,7 +152,6 @@ class Account():
             return [email, domain]
         except ValueError:
             return [self.email, b'']
-
 
 
     @property
@@ -247,168 +272,9 @@ class Account():
         return ':'.join([decode(b) for b in [self.email, self.username, self.password, self.misc]])
 
 
-
-class Source():
-
-    def __init__(self, name, hashtype='', misc='', date=None, size=0):
-
-        self.name       = name
-        self.hashtype   = hashtype.upper()
-        self.misc       = misc
-        self.size       = size
-        if date is None:
-            self.date   = datetime.now()
-        elif not type(date) == datetime:
-            raise TypeError('invalid date format, must be datetime(), not {} / {}'.format(type(date), str(date)))
-        else:
-            self.date   = date
-
-
-    def document(self, misc=True, date=False):
-
-        doc = dict()
-
-        doc['name'] = self.name
-        doc['size'] = self.size
-        doc['hashtype'] = self.hashtype
-        if misc:
-            doc['misc'] = self.misc
-        if date:
-            doc['date'] = self.date
-
-        return doc
-
-
-    @classmethod
-    def from_document(cls, document):
-
-        try:
-            document.pop('_id')
-        except KeyError:
-            pass
-        return cls(**document)
-
-
-    def __eq__(self, other):
-
-        return (self.name == other.name) and (self.hashtype == other.hashtype)
-
-
-    def __str__(self):
-
-        return f'{self.size:<15,.0f}{self.name}, {self.hashtype}{(f" ({self.misc})" if self.misc else "")}'
-
-
-
-
-class AccountMetadata():
-
-    def __init__(self, sources):
-
-        self.sources = sources
-
-
-    def __str__(self):
-
-        s = ''
-        s += '\n'.join([' |- {}'.format(str(source)) for source in self.sources])
-        return s
-
-
     def __iter__(self):
 
-        for source in self.sources:
-            yield source
+        for k,v in self.document.items():
+            yield (k,v)
 
 
-    def __len__(self):
-
-        return len(self.sources)
-
-
-
-
-class Leak():
-
-    def __init__(self, source_name='unknown', source_hashtype='', source_misc=''):
-
-        self.source         = Source(source_name, source_hashtype, source_misc)
-        self.accounts       = set()
-
-
-    def add_account(self, *args, **kwargs):
-        '''
-        email='', username='', password='', misc=''
-        '''
-
-        try:
-            if type(args[0]) == Account:
-                self.accounts.add(args[0])
-                return
-        except IndexError:
-            pass
-
-        self.accounts.add(Account(*args, **kwargs))
-
-
-    def dump(self, folder='cleaned', maximum=None):
-        '''
-        dump format is email:username:password:misc
-        with null bytes in place of colons
-        '''
-
-        '''
-
-        folder = Path(folder).resolve()
-        folder.mkdir(mode=0o750, exist_ok=True)
-        assert folder.is_dir(), '{} is not a folder.'.format(folder)
-
-        file = folder / '{}-{}.txt'.format(self.source.name, self.source.hashtype)
-        assert not file.exists(), '{} already exists.'.format(file)
-
-        errprint('[+] Dumping to {}'.format(file))
-
-        c = 0
-        with open(file, 'wb') as f:
-            for account in self.accounts:
-                f.write(account.to_bytes() + b'\n')
-                if maximum:
-                    if c >= maximum:
-                        break
-                if c % 1000 == 0:
-                    errprint('\r[+] {:,}'.format(c), end='')
-                c += 1
-        errprint('')
-        '''
-        for account in self.accounts:
-            sys.stdout.buffer.write(account.bytes + b'\n')
-
-
-    def read(self, file, unattended=False, strict=False):
-
-        from .quickparse import QuickParse
-
-        q = QuickParse(file, unattended=unattended)
-        self.source.name = q.source_name
-        self.source.hashtype = q.source_hashtype
-        for account in q:
-            self.add_account(account)
-
-
-    def __iter__(self):
-
-        for account in self.accounts:
-            yield account
-
-
-    def __str__(self):
-
-        s  = '{}:\n'.format(self.source.name)
-        s += '  unique accounts: {:,}'.format(len(self))
-
-        return s
-
-
-    def __len__(self):
-
-        return len(self.accounts)

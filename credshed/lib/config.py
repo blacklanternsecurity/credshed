@@ -2,7 +2,7 @@
 
 # by TheTechromancer
 
-### READS CONFIG INTO credshed_config VARIABLE ###
+### READS CONFIG INTO config VARIABLE ###
 
 import configparser
 from .errors import *
@@ -22,4 +22,5 @@ def read_config():
     return config
 
 
-credshed_config = read_config()
+
+config = read_config()

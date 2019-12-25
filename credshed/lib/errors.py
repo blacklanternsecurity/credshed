@@ -2,8 +2,12 @@
 
 # by TheTechromancer
 
+# General Credshed errors
 
 class CredShedError(Exception):
+    pass
+
+class CredShedUtilError(CredShedError):
     pass
 
 class CredShedConfigError(CredShedError):
@@ -24,18 +28,18 @@ class AccountCreationError(CredShedError):
 class LineAbsorptionError(AccountCreationError):
     pass
 
-# QuickParse-specific
+# TextParse-specific
 
-class QuickParseError(CredShedError):
+class TextParseError(CredShedError):
     pass
 
-class QuickParsePermissionError(QuickParseError):
+class TextParsePermissionError(TextParseError):
     pass
 
-class DelimiterError(QuickParseError):
+class DelimiterError(TextParseError):
     pass
 
-class FieldDetectionError(QuickParseError):
+class FieldDetectionError(TextParseError):
     pass
 
 
@@ -51,4 +55,7 @@ class FilestoreOrphanError(FilestoreError):
     pass
 
 class FilestoreMetadataError(FilestoreError):
+    pass
+
+class FilestoreUtilError(CredShedUtilError):
     pass

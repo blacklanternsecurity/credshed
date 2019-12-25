@@ -7,12 +7,12 @@ import sys
 import json
 import hashlib
 import logging
-from .util import *
+from . import util
 from .index import *
 from ..errors import *
 from pathlib import Path
 from .decompress import *
-from ..config import credshed_config
+from ..config import config
 
 
 # set up logging
@@ -32,10 +32,9 @@ class Filestore():
 
     def __init__(self):
 
-        self.config = credshed_config['FILESTORE']
+        self.config = config['FILESTORE']
         self.dir = Path(self.config['store_dir']).resolve()
         self.index = FilestoreIndex(self.dir)
-        self.index.read()
 
         # broken symlinks: {filename}
         self.file_orphans = set()
@@ -68,17 +67,30 @@ class Filestore():
                 log.info(f'Skipping foreign symlink to {resolved_filename}')
                 continue
 
-            # skip the file if it's empty
-            if not filename.is_symlink():
-                if os.stat(str(resolved_filename)).st_size == 0:
-                    log.info(f'Skipping empty file {resolved_filename}')
+            if filename.is_symlink():
+
+                # add the file to orphans if it's a broken symlink
+                if not resolved_filename.exists():
+                    log.warning(f'Found an orphan named {filename} :(')
+                    self.file_orphans.add(filename)
                     continue
 
-            # add the file to orphans if it's a broken symlink
-            if not resolved_filename.exists():
-                log.warning(f'Found an orphan named {filename} :(')
-                self.file_orphans.add(filename)
-                continue
+            else:
+
+                # skip the file if it's been deleted
+                if not filename.is_file():
+                    log.warning(f'{filename} no longer exists')
+
+                # skip the file if it's empty or very small
+                else:
+                    try:
+                        # a@a.co == smallest valid email == 6 bytes
+                        if util.size(filename) < 6:
+                            log.info(f'Skipping empty / tiny file {resolved_filename}')
+                            continue
+                    except CredShedUtilError as e:
+                        log.error(e)
+                        continue
 
             yield filename
 
@@ -101,9 +113,6 @@ class Filestore():
         # try and rescue orphaned index entries
         # self._save_index_orphans()
         log.warning(f'Found {len(self.index_orphans):,} orphans in index')
-
-        # save the index
-        self.index.write()
 
 
     def _scan_filestore(self):
@@ -160,7 +169,7 @@ class Filestore():
         for orphan in self.file_orphans:
             try:
                 # try to read hash from .filestore backup
-                orphan_filename, orphan_hash = read_metadata(orphan)
+                orphan_filename, orphan_hash = util.read_metadata(orphan)
             except FilestoreMetadataError:
                 try:
                     # try and get the hash from the index
@@ -170,7 +179,7 @@ class Filestore():
                     continue
 
             try:
-                master = (self.dir / self.index[orphan_hash]['master_file']).resolve()
+                master = (self.dir / self.index[orphan_hash]['m']).resolve()
             except KeyError:
                 log.error(f'Hash for orphan {orphan} not found in index')
                 continue
@@ -210,7 +219,7 @@ class Filestore():
                 success = d.decompress_if_archive()
                 if success:
                     try:
-                        for child in self.index[filehash]['child_files']:
+                        for child in self.index[filehash]['c']:
                             log.info(f'    Replacing child {child} with symlink to extracted dir')
                             (self.dir / child).unlink()
                             Path(f'{self.dir / child}.extracted').symlink_to(d.extract_dir)
@@ -218,8 +227,6 @@ class Filestore():
                         del self.index[filehash]
                     except KeyError:
                         pass
-
-        self.update_index()
 
 
 
@@ -257,7 +264,7 @@ class Filestore():
                     log.error(e)
                     return
 
-                write_metadata(duplicate_file, duplicate_file_hash, master)
+                util.write_metadata(duplicate_file, duplicate_file_hash, master)
                 duplicate_file.unlink()
             except OSError as e:
                 log.warning(f'Error unlinking duplicate file {duplicate_file}: {e}')

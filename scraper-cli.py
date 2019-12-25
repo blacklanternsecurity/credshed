@@ -9,7 +9,7 @@ import logging
 import argparse
 from credshed import *
 from pathlib import Path
-from credshed.lib.pastebin import *
+from credshed.lib.scraper import *
 
 # set up logging
 log = logging.getLogger('credshed.pastebin-cli')

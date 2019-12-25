@@ -26,14 +26,18 @@ def main(options):
 
     f = Filestore()
 
+    if options.extract:
+        f.extract_files()
+
     # rebuild the index if it's empty or if requested
     if not f.index or options.update_index or options.rebuild_index:
         if options.rebuild_index:
             log.warning('Clearing index in preparation for rebuild')
-            f.index.clear()
+        else:
+            f.index.read()
         f.update_index()
-    if options.extract:
-        f.extract_files()
+        f.index.write()
+
     if options.list_index:
         print(json.dumps(f.index.json, indent=4, sort_keys=True))
 

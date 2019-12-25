@@ -53,8 +53,8 @@ class FilestoreIndex(MutableMapping):
                 hash_index = json.load(f)
                 for filehash, filenames in hash_index.items():
                     try:
-                        self.add(self.dir / filenames['master_file'], filehash=filehash)
-                        for child in filenames['child_files']:
+                        self.add(self.dir / filenames['m'], filehash=filehash)
+                        for child in filenames['c']:
                             self.add(self.dir / child, filehash)
                     except KeyError as e:
                         # if one of these keys is missing, something is wrong.
@@ -91,32 +91,39 @@ class FilestoreIndex(MutableMapping):
         if filehash is None:
             filehash = self.hash(filename)
 
+        try:
+            filesize = size(filename)
+        except FilestoreUtilError as e:
+            log.error(e)
+            return
+
         filenames = list(self.indexify(filename))
         master = None
 
         # try adding the file to an existing entry
         try:
-            master_filename = self.hash_index[filehash]['master_file']
+            master_filename = self.hash_index[filehash]['m']
             master = self.dir / master_filename
             # if the master file doesn't exist, it's clearly been moved
             if not filename.is_symlink() and not master.exists():
                 log.info(f'File {master} has been moved to {filename}')
                 index_filename = str(filename.relative_to(self.dir))
                 # update the master_file to match its new location
-                self.hash_index[filehash]['master_file'] = index_filename
+                self.hash_index[filehash]['m'] = index_filename
                 master_filename = index_filename
 
             # make sure we're not adding the master file as a child
             for filename in filenames:
                 if not filename == master_filename:
-                    self.hash_index[filehash]['child_files'].add(filename)
+                    self.hash_index[filehash]['c'].add(filename)
 
         except KeyError:
             # if that fails, make it master
             self.hash_index[filehash] = {
                 # use the resolved filename (last in the list) if possible
-                'master_file': filenames[-1],
-                'child_files': set(filenames[:-1])
+                'm': filenames[-1],
+                'c': set(filenames[:-1]),
+                's': filesize
             }
 
         for filename in filenames:
@@ -132,12 +139,15 @@ class FilestoreIndex(MutableMapping):
         '''
         json = dict()
 
-        for filehash, filenames in self.hash_index.items():
-            master_file = filenames['master_file']
-            child_files = list(filenames['child_files'])
+        for filehash, data in self.hash_index.items():
+            master_file = data['m']
+            child_files = list(data['c'])
+            filesize = data['s']
+
             json[filehash] = {
-                'master_file': master_file,
-                'child_files': list(child_files)
+                'm': master_file,
+                'c': child_files,
+                's': filesize
             }
 
         return json    
@@ -175,8 +185,8 @@ class FilestoreIndex(MutableMapping):
     def __iter__(self):
 
         for filehash, filenames in list(self.hash_index.items()):
-            master_file = self.dir / filenames['master_file']
-            child_files = [self.dir / f for f in filenames['child_files']]
+            master_file = self.dir / filenames['m']
+            child_files = [self.dir / f for f in filenames['c']]
             yield (filehash, (master_file, child_files))
 
 
@@ -221,6 +231,10 @@ class FilestoreIndex(MutableMapping):
 
     def hash(self, filename):
 
+        # read the index if it hasn't been already
+        if not self.hash_index:
+            self.read()
+
         # try to get hash by filename
         try:
             return self[filename]
@@ -228,9 +242,10 @@ class FilestoreIndex(MutableMapping):
             pass
 
         # if that fails, hash it for the first time
+        log.info(f'Computing SHA1 hash of {filename}')
         file_hash = hash_file(filename)
         # and add it to the file index so we won't need to hash it again
         for index_filename in self.indexify(filename):
             self.file_index[index_filename] = file_hash
-        
+
         return file_hash

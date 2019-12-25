@@ -12,8 +12,9 @@ import urllib
 import logging
 import requests
 import threading
-from .leak import *
-from .errors import *
+from ..leak import *
+from ..config import *
+from ..errors import *
 from time import sleep
 from pathlib import Path
 from datetime import datetime, timedelta
@@ -85,8 +86,6 @@ class Pastebin():
 
     def __init__(self, credshed, loop_delay=60, scrape_limit=100, save_dir=None, keep_pastes=True):
 
-        from .core import read_config
-
         self.credshed = credshed
         self.ref_id = None
         self.queue = []
@@ -95,7 +94,6 @@ class Pastebin():
         self.keep_pastes = keep_pastes
         self.scrape_limit = scrape_limit
         self.session = requests.Session()
-        self.config = read_config()
 
         if save_dir is None:
             save_dir = Path.cwd()
@@ -258,7 +256,7 @@ class PasteBinReport():
                         except KeyError:
                             self.domains[domain] = 1
 
-                except QuickParseError as e:
+                except TextParseError as e:
                     log.error(str(e))
                     continue
 
@@ -419,11 +417,11 @@ class PasteBinReport():
         # generic email headers
         msg['Subject'] = f'CredShed Scraping Report {datetime.now().isoformat(timespec="hours").split("T")[0]}'
         try:
-            msg['From'] = self.pastebin.config['EMAIL ALERTS']['from']
-            mail_server = self.pastebin.config['EMAIL ALERTS']['mail_server']
-            mail_port = self.pastebin.config['EMAIL ALERTS']['mail_port']
-            auth_user = self.pastebin.config['EMAIL ALERTS']['auth_user']
-            auth_pass = self.pastebin.config['EMAIL ALERTS']['auth_pass']
+            msg['From'] = config['EMAIL ALERTS']['from']
+            mail_server = config['EMAIL ALERTS']['mail_server']
+            mail_port = config['EMAIL ALERTS']['mail_port']
+            auth_user = config['EMAIL ALERTS']['auth_user']
+            auth_pass = config['EMAIL ALERTS']['auth_pass']
         except KeyError as e:
             log.critical(f'Error parsing credshed.config: {e}')
             return

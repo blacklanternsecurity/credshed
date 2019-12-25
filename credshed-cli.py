@@ -40,37 +40,21 @@ logging.getLogger('credshed').addHandler(console)
 
 class CredShedCLI(CredShed):
 
-    def __init__(self, output='__db__', unattended=False, metadata=True, metadata_only=False, deduplication=False, threads=2):
+    def __init__(self, stdout=False, unattended=False, deduplication=False, threads=2):
 
-        output = Path(output)
+        super().__init__(stdout=stdout, unattended=unattended, deduplication=deduplication, threads=threads)
 
-        super().__init__(output=output, unattended=unattended, metadata=metadata, \
-            metadata_only=metadata_only, deduplication=deduplication, threads=threads)
-
-        # if we're outputting to a file instead of the DB
-        if not str(output) == '__db__':
-            # validate output destination
-            self.output = output.resolve()
-            assert not self.output.is_dir(), 'Creation of {} is blocked'.format(self.output)
-            if self.output.exists():
-                self.log.warning('Overwriting {} - CTRL+C to cancel'.format(self.output))
-                sleep(5)
-
-        if not self.db.use_metadata:
-            if metadata_only:
-                raise CredShedMetadataError('"metadata_only" option specified but none available')
-            else:
-                self.log.warning('Continuing without metadata support')
-                self.metadata=False
+        if not self.db.meta_client:
+            self.log.warning('Continuing without metadata support')
 
 
-    def _search(self, query, query_type, verbose=False):
+    def search(self, query, query_type, verbose=False):
 
         start_time = datetime.now()
         num_accounts_in_db = self.db.account_count()
 
         num_results = 0
-        for account in self.search(query, query_type=query_type, verbose=verbose):
+        for account in super().search(query, query_type=query_type, verbose=verbose):
             print(str(account))
             if verbose:
                 metadata = self.db.fetch_account_metadata(account)
@@ -84,9 +68,9 @@ class CredShedCLI(CredShed):
         self.log.info('{:,} results for "{}"'.format(num_results, '|'.join(query)))
 
 
-    def _stats(self):
+    def stats(self):
 
-        print(self.stats())
+        print(super().stats())
 
 
     def delete_leaks(self, source_ids=[]):
@@ -124,7 +108,7 @@ class CredShedCLI(CredShed):
                 while 1:
 
                     assert self.db.sources.estimated_document_count() > 0, 'No more leaks in DB'
-                    print(self.db.stats())
+                    self.db.stats()
                     most_recent_source_id = self.db.most_recent_source_id()
 
                     try:
@@ -146,8 +130,7 @@ class CredShedCLI(CredShed):
 def main(options):
 
     try:
-        cred_shed = CredShedCLI(output=options.out, unattended=options.unattended, \
-            metadata=(not options.no_metadata), metadata_only=options.metadata_only, \
+        cred_shed = CredShedCLI(stdout=options.stdout, unattended=options.unattended, \
             deduplication=options.deduplication, threads=options.threads)
     except CredShedError as e:
         log.critical('{}: {}\n'.format(e.__class__.__name__, str(e)))
@@ -159,7 +142,7 @@ def main(options):
     # if we're importing stuff
     try:
         if options.add:
-            cred_shed.import_files(options.add, quiet=not(options.show_unique))
+            cred_shed.import_file(options.add[0])
 
         elif options.delete_leak is not None:
             cred_shed.delete_leaks(options.delete_leak)
@@ -181,10 +164,10 @@ def main(options):
                         # options.query_type = 'username'
                         # errprint('[+] Searching by username')
 
-                cred_shed._search(options.search, query_type=options.query_type, verbose=options.verbose)
+                cred_shed.search(options.search, query_type=options.query_type, verbose=options.verbose)
 
         if options.stats:
-            cred_shed._stats()
+            cred_shed.stats()
 
     except CredShedError as e:
         log.error('{}: {}\n'.format(e.__class__.__name__, str(e)))
@@ -212,14 +195,11 @@ if __name__ == '__main__':
     parser.add_argument('-q', '--query-type',           default='auto',                 help='query type (email, domain, or username)')
     parser.add_argument('-a', '--add',      type=Path,  nargs='+',                      help='add files or directories to the database')
     parser.add_argument('-t', '--stats',    action='store_true',                        help='show all imported leaks and DB stats')
-    parser.add_argument('-o', '--out',      type=Path,  default='__db__',               help='write output to file instead of database')
+    parser.add_argument('-s', '--stdout',   action='store_true',                        help='write output to stdout instead of database (null-byte delimited, use tr \'\\0\')')
     parser.add_argument('-d', '--delete-leak',          nargs='*',                      help='delete leak(s) from database, e.g. "1-3,5,7-9"', metavar='SOURCE_ID')
     parser.add_argument('-dd', '--deduplication',       action='store_true',            help='deduplicate accounts ahead of time (lots of memory usage on large files)')
     parser.add_argument('--threads',        type=int,   default=default_threads,        help='number of threads for import operations')
-    parser.add_argument('--show-unique',    action='store_true',                        help='show each unique imported account')
     parser.add_argument('-u', '--unattended',           action='store_true',            help='auto-detect import fields without user interaction')
-    parser.add_argument('--no-metadata',                action='store_true',            help="don't use metadata database")
-    parser.add_argument('--metadata-only',              action='store_true',            help='when importing, only import metadata')
     parser.add_argument('-v', '--verbose',              action='store_true',            help='display all available data for each account')
     parser.add_argument('--debug',                      action='store_true',            help='display debugging info')
 
@@ -230,8 +210,6 @@ if __name__ == '__main__':
             sys.exit(0)
 
         options = parser.parse_args()
-
-        assert not (options.no_metadata and options.metadata_only), "Conflicting options: --no-metadata and --only-metadata"
 
         if options.debug:
             console.setLevel(logging.DEBUG)

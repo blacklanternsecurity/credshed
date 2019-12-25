@@ -5,6 +5,7 @@
 ### MISC FUNCTIONS USED THROUGHOUT THE PROJECT ###
 
 import sys
+from . import filestore
 
 
 def clean_encoding(s):
@@ -38,6 +39,18 @@ def errprint(*s, end='\n'):
     sys.stderr.flush()
 
 
+def error_detail(e):
+    '''
+    Given a pymongo error, returns a string containing as much detail as possible
+    '''
+    error = f'{e}: '
+    try:
+        error += str(e.details)
+    except AttributeError:
+        pass
+    return error
+
+
 def number_range(s):
     '''
     takes array of strings and tries to convert into an array of ints
@@ -59,3 +72,19 @@ def number_range(s):
                 continue
 
     return n_array
+
+
+def hash_file(filename):
+
+    try:
+        # if filestore is active, hash through the index in case it's already been cached
+        return filestore.filestore.index.hash(filename)
+
+    # otherwise, just dew it
+    except AttributeError:
+        return filestore.util.hash_file(filename)
+
+
+def size(filename):
+
+    return filestore.util.size(filename)

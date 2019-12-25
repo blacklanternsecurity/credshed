@@ -2,6 +2,7 @@
 
 # by TheTechromancer
 
+import os
 import hashlib
 import configparser
 from ..errors import *
@@ -55,3 +56,16 @@ def read_metadata(filename):
 
     except (OSError, configparser.Error, KeyError) as e:
         raise FilestoreMetadataError(f'Failed to read metadata for {filename}: {e}')
+
+
+
+def size(filename):
+    '''
+    Returns size of file in bytes
+    '''
+
+    filename = Path(filename).resolve()
+    try:
+        return os.stat(str(filename)).st_size
+    except OSError as e:
+        raise FilestoreUtilError(f'Error getting filesize from {filename}: {e}')

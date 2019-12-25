@@ -7,106 +7,52 @@ import queue
 import hashlib
 import logging
 import pymongo
+import itertools
 import traceback
-from .leak import *
 from .util import *
 from .errors import *
+from .source import *
+from .account import *
 from time import sleep
-import multiprocessing
 from pathlib import Path
-from .config import credshed_config
+from .config import config
 from datetime import datetime, timedelta
+
+
+# set up logging
+log = logging.getLogger('credshed.db')
 
 
 class DB():
 
-    def __init__(self, use_metadata=True, metadata_only=False):
+    def __init__(self):
 
-        # set up logging
-        self.log = logging.getLogger('credshed.db')
-
-        self.metadata_only = metadata_only
-        
-        self.config = credshed_config
-
+        # set up main database (for accounts)
         try:
-
-            ### MONGO PRIMARY ###
-
-            try:
-                main_server = self.config['MONGO PRIMARY']['server']
-                main_port = int(self.config['MONGO PRIMARY']['port'])
-                main_db = self.config['MONGO PRIMARY']['db']
-                self.mongo_user = self.config['MONGO GLOBAL']['user']
-                self.mongo_pass = self.config['MONGO GLOBAL']['pass']
-            except KeyError as e:
-                raise CredShedConfigError(str(e))
-
-            # main DB
-            self.main_client = pymongo.MongoClient(main_server, main_port, username=self.mongo_user, password=self.mongo_pass)
-            self.main_db = self.main_client[main_db]
-            try:
-                self.main_db.command('dbstats')
-            except ValueError as e:
-                raise CredShedConfigError(str(e))
-
+            self.main_client = self._get_main_client()
+            self.main_db = self.main_client[self.main_db_name]
             self.accounts = self.main_db.accounts
+        except CredShedError as e:
+            self.main_client = None
+            log.error(f'Error setting up main database: {e}')
 
-        except pymongo.errors.PyMongoError as e:
-            error = str(e) + '\n'
-            try:
-                error += str(e.details)
-            except AttributeError:
-                pass
-            raise CredShedDatabaseError(error)
+        # set up meta database (for account metadata)
+        try:
+            self.meta_client = self._get_meta_client()
+            self.meta_db = self.meta_client[self.meta_db_name]
+            self.accounts_metadata = self.meta_db.accounts_metadata
+        except CredShedError as e:
+            self.meta_client = None
+            log.error(f'Error setting up meta database: {e}')
 
-        self.use_metadata = False
-        if use_metadata:
-            try:
-
-                ### MONGO METADATA ###
-
-                try:
-                    meta_server = self.config['MONGO METADATA']['server']
-                    meta_port = int(self.config['MONGO METADATA']['port'])
-                    meta_db = self.config['MONGO METADATA']['db']
-                except KeyError as e:
-                    raise CredShedConfigError(str(e))
-
-                # meta DB (account metadata including source information, leak <--> account associations, etc.)
-                self.meta_client = pymongo.MongoClient(meta_server, meta_port, username=self.mongo_user, password=self.mongo_pass)
-                self.meta_db = self.meta_client[meta_db]
-                try:
-                    self.meta_db.command('dbstats')
-                except ValueError as e:
-                    raise CredShedConfigError(str(e))
-
-                self.account_tags = self.meta_db.account_tags
-                self.use_metadata = True
-
-            except pymongo.errors.PyMongoError as e:
-                error = str(e) + '\n'
-                try:
-                    error += str(e.details)
-                except AttributeError:
-                    pass
-
-                self.log.warning('Problem with metadata database at {}:{}\n{}'.format(\
-                    meta_server, meta_port, error))
-
-        if (not self.use_metadata) and self.metadata_only:
-            raise CredShedMetadataError('"metadata_only" option specified but none is available')
+        if not (self.main_client or self.meta_client):
+            raise CredShedDatabaseError('Failed to contact both main and metadata databases')
 
         #self.accounts.create_index([('username', pymongo.ASCENDING)], sparse=True, background=True)
         #self.accounts.create_index([('email', pymongo.ASCENDING)], sparse=True, background=True)
 
         # sources
         self.sources = self.main_db.sources
-
-        # leak-specific counters
-        self.leak_unique = 0
-        self.leak_overall = 0
-        self.leak_size = 0
 
 
 
@@ -118,12 +64,7 @@ class DB():
         try:
             return Account.from_document(self.accounts.find({'_id': _id}).next())
         except (pymongo.errors.PyMongoError, StopIteration) as e:
-            error = str(e)
-            try:
-                error += (str(e.details))
-            except AttributeError:
-                pass
-            raise CredShedDatabaseError(error)
+            raise CredShedDatabaseError(error_detail(e))
 
 
 
@@ -175,7 +116,7 @@ class DB():
 
                     query_regex = rf'^{query_str}.*'
                     query = {'_id': {'$regex': query_regex}}
-                    self.log.info(f'Raw mongo query: {query}')
+                    log.info(f'Raw mongo query: {query}')
                     results['emails'] = self.accounts.find(query).limit(max_results)
                     #results['emails'] = self.accounts.find({'email': email, '_id': {'$regex': domain_regex}})
                     #results['emails'] = self.accounts.find({'email': email})
@@ -186,7 +127,7 @@ class DB():
                     '''
                     email = r'^{}$'.format(keyword.lower())
                     query = {'email': {'$regex': email}}
-                    self.log.info(query)
+                    log.info(query)
                     results['emails'] = self.accounts.find(query).limit(max_results)
                     '''
 
@@ -204,13 +145,13 @@ class DB():
 
                 num_sections = len(domain.split('.'))
                 query = {'_id': {'$regex': query_regex}}
-                self.log.info(f'Raw mongo query: {query}')
+                log.info(f'Raw mongo query: {query}')
                 results['emails'] = self.accounts.find(query).limit(max_results)
 
             elif query_type == 'username':
                 query_regex = rf'^{re.escape(keyword)}$'
                 query = {'username': {'$regex': query_regex}}
-                self.log.info(f'Raw mongo query: {query}')
+                log.info(f'Raw mongo query: {query}')
                 results['usernames'] = self.accounts.find(query).limit(max_results)
 
             else:
@@ -222,13 +163,13 @@ class DB():
                         account = Account.from_document(result)
                         yield account
                     except AccountCreationError as e:
-                        self.log.warning(str(e))
+                        log.warning(str(e))
             
 
 
     def fetch_account_metadata(self, account):
 
-        if not self.use_metadata:
+        if not self.meta_client:
             raise CredShedMetadataError('No metadata available')
 
         sources = []
@@ -245,341 +186,30 @@ class DB():
                 else:
                     raise TypeError
 
-                source_ids = self.account_tags.find_one({'_id': _id})['s']
+                source_ids = self.accounts_metadata.find_one({'_id': _id})['s']
 
                 for source_id in source_ids:
                     try:
                         sources.append(self.get_source(source_id))
                     except CredShedDatabaseError:
-                        self.log.warning('No database entry found for source ID {}'.format(str(source_id)))
+                        log.warning('No database entry found for source ID {}'.format(str(source_id)))
                         continue
 
             except KeyError as e:
                 raise CredShedError('Error retrieving source IDs from account "{}": {}'.format(str(_id), str(e)))
             except TypeError as e:
                 pass
-                #self.log.debug('No source IDs found for account ID "{}": {}'.format(str(_id), str(e)))
+                #log.debug('No source IDs found for account ID "{}": {}'.format(str(_id), str(e)))
 
             account_metadata = AccountMetadata(sources)
             return account_metadata
 
 
 
-    def add_leak(self, leak, num_child_processes=4):
-        '''
-
-        Adds Leak() object to database
-        Yields Account() object for any unique account
-
-        benchmarks for adding 1M accounts:
-            (best average: ~62,500 per second)
-                batch size - time
-                =================
-                100 - 2:03
-                1000 - 1:51
-                5000 - 1:47
-                10000 - 1:36
-                100000 - 1:37
-                =======================
-                10000 (x2 threads) - 1:04
-                10000 (x4 threads) - 0:38
-                10000 (x8 threads) - 0:35
-                early implementation with low-level mp.Process() and mp.Queue(): ?? or was it Pipe() WHO KNOWS
-                    10000 (x8 procs, x1 threads) - 0:13
-                later implementation with mp.Pool() and mp.manager.Queue():
-                    10000 (x8 procs, x1 threads) - 0:23
-                    10000 (x4 procs, x2 threads) - 0:21
-                    10000 (x2 procs, x4 threads) - 0:24
-                later implementation attempting to replicate previous results:
-                    10000 (x8 procs, x1 threads) - 0:18
-                    10000 (x4 procs, x2 threads) - 0:20
-                    10000 (x4 procs, x3 threads) - 0:19
-                    10000 (x8 procs, x2 threads) - 0:17
-                mp.Process() and mp.Pipe():
-                    10000 (x8 procs, x1 threads) - 0:19
-                    10000 (x4 procs, x2 threads) - 0:20
-                    10000 (x4 procs, x3 threads) - 0:17
-                    10000 (x4 procs, x4 threads) - 0:17
-                    10000 (x8 procs, x2 threads) - 0:16
-
-        Benchmarks for LinkedIn:
-            (average: ~21,600 per second)
-                104,957,167 (x8 procs, x2 threads) - 01:20:59
-                    Total Accounts: 104,957,167
-                    Unique Accounts: 104,957,162 (100.0%)
-                    Time Elapsed: 01:20:59
-
-            (average: ~65,400 per second)
-                104,957,167 (x24 procs, x2 shards, tmpfs [no storage bottleneck]) - 0:26:46
-                    Total Accounts: 104,957,167
-                    Unique Accounts: 104,957,162 (100.0%)
-                    Time Elapsed: 0 hours, 26 minutes, 46 seconds
-
-        Benchmarks for Exploit.in:
-            16 threads (with tmpfs):
-                [+] Total Accounts: 684,676,603
-                [+] Unique Accounts: 684,676,603 (100.0%)
-                [+] Time Elapsed: 7 hours, 21 minutes, 27 seconds
-            16 threads (with tmpfs + rsync every 30 minutes)
-                [+] Total Accounts: 684,676,603
-                [+] Unique Accounts: 649,522,395 (94.9%)
-                [+] Time Elapsed: 9 hours, 2 minutes, 28 seconds
-
-        Benchmarks for bigDB:
-            11 threads on IBM, mongo + mongo meta (3-2-2019)
-                [+] Total Accounts: 2,674,862,578
-                [+] Unique Accounts: 1,093,289,423 (40.9%)
-                [+] Time Elapsed: 66 hours, 17 minutes, 16 seconds
-                (675,470 per minute)
-
-            50 threads on IBM, mongo primary only, 10 shards (5-7-2019)
-                [+] Import results for "bigDB/bigDB"
-                [+]    total accounts: 2,679,632,050
-                [+]    unique accounts: 832,557,894 (31.1%)
-                [+]    time elapsed: 51 hours, 27 minutes, 0 second
-        '''
-
-        try:
-            self.leak_size = len(leak)
-        except TypeError:
-            self.leak_size = 0
-
-        start_time = datetime.now()
-        self.log.debug('Adding leak {}'.format(str(leak.source)))
-
-        try:
-
-            source_id = self.add_source(leak.source)
-
-            self.log.debug('Using {} child processes'.format(num_child_processes))
-
-            # start the child processes
-            for unique_account in self._babysit_child_processes(leak, source_id, num_child_processes):
-                yield unique_account
-
-            # update source counter
-            self.sources.update_one({'_id': source_id}, {'$set': {'size': self.leak_overall}})
-
-            end_time = datetime.now()
-            time_elapsed = (end_time - start_time).total_seconds()
-
-            if self.leak_overall > 0:
-                self.log.info('{:,}/{:,} ({:.2f}%) unique accounts in "{}".  Time elapsed: {:02d}:{:02d}:{:02d}'.format(
-                    self.leak_unique,
-                    self.leak_overall,
-                    ((self.leak_unique/self.leak_overall)*100), 
-                    leak.source.name,
-                    int(time_elapsed // 3600),
-                    int((time_elapsed % 3600) // 60),
-                    int(time_elapsed % 60)))
-
-        except pymongo.errors.PyMongoError as e:
-            error = str(e)
-            try:
-                error += (str(e.details))
-            except AttributeError:
-                pass
-            self.log.error(error)
-
-        except QuickParseError as e:
-            self.log.error(str(e))
-
-        except Exception as e:
-            self.log.critical(str(traceback.format_exc()))
-
-        finally:
-            # reset leak counters
-            self.leak_unique = 0
-            self.leak_overall = 0
-            self.leak_size = 0
-
-
-
-    def _babysit_child_processes(self, leak, source_id, num_child_processes, process_timeout_seconds=600):
-
-        timeout_delta = timedelta(seconds=process_timeout_seconds)
-
-        batch_generator = self._gen_batches(leak, source_id)
-        batches_remaining = True
-
-        # process-specific queues for batch submission
-        batch_queues = [multiprocessing.Queue(3) for i in range(num_child_processes)]
-        # process-specific queues for results (e.g. number of accounts inserted)
-        result_queues = [multiprocessing.Queue(10) for i in range(num_child_processes)]
-        # process-specific queues for communication
-        error_queues = [multiprocessing.Queue(10) for i in range(num_child_processes)]
-        # activity timers for detecting inactive processes
-        last_active_times = [datetime.now() for i in range(num_child_processes)]
-        # Process() objects
-        child_processes = ['not_started'] * num_child_processes
-
-
-        # i know i know
-        def kill_child(_thread_id):
-            tries = 10
-            while tries > 0 and child_processes[_thread_id] is not None:
-                tries -= 1
-                try:
-                    child_processes[_thread_id].terminate()
-                    sleep(.2)
-                    child_processes[_thread_id].kill()
-                    sleep(.2)
-                    child_processes[_thread_id].close()
-                    child_processes[_thread_id] = None
-                except ValueError:
-                    # ValueError "Cannot close a process while it is still running."
-                    sleep(.1)
-                    continue
-                break
-
-            # recreate the queues just to be safe?
-            # batch_queues[thread_id].close()
-            # batch_queues[thread_id] = multiprocessing.Queue(3)
-            # result_queues[thread_id].close()
-            # result_queues[thread_id] = multiprocessing.Queue(10)
-            # error_queues[thread_id].close()
-            # error_queues[thread_id] = multiprocessing.Queue(10)
-
-
-        # AND THE ROWERS KEEP ON ROWING
-        while not all([c == 'finished' for c in child_processes]):
-
-            for thread_id in range(num_child_processes):
-
-                try:
-                    #self.log.debug('Sending one batch')
-                    # send one batch
-                    temp_thread_id = copy.deepcopy(thread_id)
-                    batch = next(batch_generator)
-                    while 1:
-                        try:
-                            batch_queues[temp_thread_id].put_nowait(batch)
-                            # self.log.debug('Submitted batch to child process #{} in {}'.format(temp_thread_id, leak.source.name))
-                            break
-                        except queue.Full:
-                            # self.log.debug('Batch queue full for child process #{}'.format(temp_thread_id))
-                            temp_thread_id = ((temp_thread_id + 1) % num_child_processes)
-                            sleep(.1)
-                    #self.log.debug('Finished sending batch')
-
-                except StopIteration:
-                    if batches_remaining:
-                        # self.log.debug('Reached end of batches.  Sending shutdown signals for {}'.format(leak.source.name))
-
-                        # we've yeeted our last batch
-                        batches_remaining = False
-                        signals_sent = set()
-
-                        # send shutdown signal to threads
-                        i = 0
-                        while len(signals_sent) < num_child_processes:
-                            if child_processes[i] in ['not_started', 'finished']:
-                                signals_sent.add(i)
-                            if i not in signals_sent:
-                                try:
-                                    batch_queues[i].put_nowait(None)
-                                    signals_sent.add(i)
-                                except (queue.Full, AssertionError):
-                                    # self.log.debug('Cannot send shutdown signal to thread #{} in {} {}'.format(thread_id, leak.source.name, str(child_processes)))
-                                    # AssertionError: Queue <multiprocessing.queues.Queue object at 0xdeadbeef> has been closed
-                                    sleep(.1)
-
-                            i = (i + 1) % num_child_processes
-
-                        # self.log.debug('Finished sending shutdown signals for {}'.format(leak.source.name))
-                    # else:
-                    #    self.log.debug("we're here again {} {}".format(leak.source.name, str(child_processes)))
-
-
-                # clear out the error queue
-                while 1:
-                    #self.log.debug('Clearing error queue')
-                    try:
-                        error = error_queues[thread_id].get_nowait()
-                        self.log.error(str(error))
-                    except queue.Empty:
-                        #OSError: handle is closed
-                        #self.log.debug('Error queue cleared for child process #{}'.format(thread_id))
-                        break
-                    except OSError as e:
-                        self.log.error('OSError: {}'.format(str(e)))
-                        break
-
-                # clear out the result queue
-                while 1:
-                    #self.log.debug('Clearing result queue')
-                    try:
-                        upserted_accounts = result_queues[thread_id].get_nowait()
-
-                        last_active_times[thread_id] = datetime.now()
-
-                        if upserted_accounts is None:
-                            # self.log.debug('Child process #{} finished in {}'.format(thread_id, leak.source.name))
-                            # mark as finished
-                            child_processes[thread_id] = 'finished'
-                        else:
-                            # self.log.debug('ADD {} NEW ACCOUNTS FOR {}'.format(new_accounts, leak.source.name))
-                            self.leak_unique += len(upserted_accounts)
-                            for _id, account_doc in upserted_accounts.items():
-                                try:
-                                    account_doc['_id'] = _id
-                                except TypeError:
-                                    continue
-                                yield Account.from_document(account_doc)
-                            
-                    except queue.Empty:
-                        break
-                    except OSError as e:
-                        log.error(f'OSError: {e}')
-                        break
-
-
-                if child_processes[thread_id] == 'finished':
-                    continue
-
-                else:
-
-                    idle_time = datetime.now() - last_active_times[thread_id]
-                    stalled = (idle_time > timeout_delta)
-
-                    # if process isn't started yet or if it's inactive
-                    if child_processes[thread_id] == 'not_started' or stalled:
-                        #self.log.debug('Starting child process #{thread_id}')
-
-                        # just mark it as finished if there are no batches left
-                        if not batches_remaining:
-                            child_processes[thread_id] = 'finished'
-                            continue
-
-                        # Kill process if it's stalled
-                        elif stalled:
-
-                            self.log.warning('Child process #{} for {} stalled after {:,} seconds, restarting'.format(\
-                                thread_id, leak.source.name, process_timeout_seconds))
-                            kill_child(thread_id)
-
-                        # then start the new child process
-                        # self.log.debug('Creating new child process #{} for {}'.format(thread_id, leak.source.name))
-                        child_processes[thread_id] = multiprocessing.Process(target=self._add_batches, args=(\
-                            batch_queues[thread_id], result_queues[thread_id], error_queues[thread_id], source_id), daemon=True)
-                        sleep(.1)
-                        try:
-                            # self.log.debug('Starting new child process #{} for {}'.format(thread_id, leak.source.name))
-                            last_active_times[thread_id] = datetime.now()
-                            child_processes[thread_id].start()
-                        except AttributeError:
-                            # AttributeError: 'NoneType' object has no attribute 'poll'
-                            continue
-
-            sleep(.1)
-
-        # self.log.info('All child processes finished for {}'.format(leak.source.name))
-
-
 
     def delete_leak(self, source_id, batch_size=10000):
 
-        if not self.use_metadata:
+        if not self.meta_client:
             raise CredShedMetadataError('Removing leaks requires access to metadata. No metadata database is currently attached.')
 
         else:
@@ -587,12 +217,12 @@ class DB():
             accounts_deleted = 0
             to_delete = []
 
-            self.log.info('\nDeleting leak "{}{}"'.format(source.name, ':{}'.format(source.hashtype) if source.hashtype else ''))
+            log.info('\nDeleting leak "{}{}"'.format(source.name, ':{}'.format(source.hashtype) if source.hashtype else ''))
 
             try:
 
                 # delete accounts
-                for result in self.account_tags.find({'s': [source_id]}, {'_id': 1}):
+                for result in self.accounts_metadata.find({'s': [source_id]}, {'_id': 1}):
                     to_delete.append(pymongo.DeleteOne(result))
                     if len(to_delete) % batch_size == 0:
                         accounts_deleted += self.accounts.bulk_write(to_delete, ordered=False).deleted_count
@@ -603,9 +233,9 @@ class DB():
                     accounts_deleted += self.accounts.bulk_write(to_delete, ordered=False).deleted_count
 
                 # delete out of tags collection
-                self.account_tags.delete_many({'s': [source_id]})
+                self.accounts_metadata.delete_many({'s': [source_id]})
                 # pull source ID from affected accounts
-                self.account_tags.update_many({'s': source_id}, {'$pull': {'s': source_id}})
+                self.accounts_metadata.update_many({'s': source_id}, {'$pull': {'s': source_id}})
 
                 errprint('\r[+] Deleted {:,} accounts'.format(accounts_deleted), end='')
 
@@ -613,42 +243,105 @@ class DB():
 
 
             except TypeError as e:
-                self.log.error(str(e))
-                self.log.error('[!] Can\'t find source "{}:{}"'.format(source.name, source.hashtype))
+                log.error(str(e))
+                log.error('[!] Can\'t find source "{}:{}"'.format(source.name, source.hashtype))
 
             errprint('')
-            self.log.info('{:,} accounts deleted'.format(accounts_deleted))
+            log.info('{:,} accounts deleted'.format(accounts_deleted))
 
             return accounts_deleted
 
 
-    def add_source(self, source):
+    def add_source(self, source, import_finished=False):
+        '''
+        Inserts source details such as name, description, hash, etc.
+        Returns new or existing Leak ID
+        DOES NOT import accounts (use the Injestor)
 
-        source_doc = source.document(misc=False, date=False)
+        The reason we need _id AND hash is because _id is used in accounts_metadata to keep track of account/source associations
 
-        source_in_db = self.sources.find_one(source_doc)
-        if source_in_db is not None:
-            source_id, source_name = source_in_db['_id'], source_in_db['name']
-            self.log.info('Source ID {} ({}) already exists, merging'.format(source_id, source_name))
-            self.sources.update_one(source_doc, {'$set': {'modified_date': datetime.now()}}, upsert=True)
-            return source_id
-            #assert False, 'Source already exists'
-        else:
-            d = self.sources.find_one(sort=[('_id', 1)])
-            id_counter = (d['_id']+1 if d else 0)
+        Meant to be called twice:
+            - Once before a source is imported in order to get the Source ID
+            - Again after a source is imported to update file list and unique account counters
+        '''
 
-            source_doc = source.document(misc=True, date=True)
-            while 1:       
+        # see if it already exists - try to find by hash
+        source_in_db = self.sources.find_one({'hash': source.hash})
 
+        # if it doesn't exist, create it
+        if source_in_db is None:
+
+            id_counter = self._make_source_id()
+
+            while 1:
                 try:
-                    id_counter += 1
-                    source_doc['_id'] = id_counter
-                    self.sources.insert_one(source_doc)
+                    self.sources.insert_one({
+                        '_id': id_counter,
+                        'name': (str(source.filename) if import_finished else ''),
+                        'hash': source.hash,
+                        'files': [str(source.filename)],
+                        'filesize': source.filesize,
+                        'description': (source.description if import_finished else ''),
+                        'modified_date': datetime.now(),
+                        'total_accounts': (source.total_accounts if import_finished else 0),
+                        'unique_accounts': (source.unique_accounts if import_finished else 0)
+                    })
                     break
+
                 except pymongo.errors.DuplicateKeyError:
+                    id_counter += 1
                     continue
 
-        return id_counter
+                except pymongo.errors.PyMongoError as e:
+                    raise CredShedDatabaseError(error_detail(e))
+                    break
+
+            return id_counter
+
+        # otherwise, update it
+        else:
+            # log.info(f'Matching hash for {self.filename} found')
+
+            if import_finished:
+                self.sources.update_one({'hash': source.hash}, {
+                    '$addToSet': {
+                        'files': str(source.filename)
+                    },
+                    '$set': {
+                        'modified_date': datetime.now(),
+                        'total_accounts': source.total_accounts
+                    },
+                    '$inc': {
+                        'unique_accounts': source.unique_accounts
+                    }
+
+                })
+
+            return source_in_db['_id']
+
+
+
+
+    def _make_source_id(self):
+
+        # get the highest source._id
+        try:
+            id_counter = next(self.sources.find({}, {'_id': 1}, sort=[('_id', -1)], limit=1))['_id']
+        except StopIteration:
+            id_counter = 0
+
+        # make double-sure it doesn't exist yet
+        while 1:
+            try:
+                id_counter += 1
+                result = self.sources.find_one({'_id': id_counter})
+                if not result:
+                    return id_counter
+            except pymongo.errors.PyMongoError as e:
+                raise CredShedDatabaseError(error_detail(e))
+                continue
+
+
 
 
     def stats(self, accounts=False, sources=True, db=False):
@@ -698,7 +391,7 @@ class DB():
                             hashtype=s['hashtype']
                         )
                     except TypeError as e:
-                        self.log.error(f'Error fetching source ID {source_id}: {e}')
+                        log.error(f'Error fetching source ID {source_id}: {e}')
 
                 if sources_stats:
                     stats.append('[+] Leaks in DB:')
@@ -742,15 +435,11 @@ class DB():
             num_accounts_in_db = collstats['count']
         except KeyError:
             num_accounts_in_db = 0
-        except pymongo.PyMongoError as e:
-            error = str(e)
-            try:
-                error += (str(e.details))
-            except AttributeError:
-                pass
-            raise CredShedDatabaseError(error)
+        except pymongo.errors.PyMongoError as e:
+            raise CredShedDatabaseError(error_detail(error))
 
         return int(num_accounts_in_db)
+
 
 
     def get_source(self, _id):
@@ -762,13 +451,8 @@ class DB():
             except (TypeError, KeyError):
                 return None
 
-        except pymongo.PyMongoError as e:
-            error = str(e)
-            try:
-                error += (str(e.details))
-            except AttributeError:
-                pass
-            raise CredShedDatabaseError(error)
+        except pymongo.errors.PyMongoError as e:
+            raise CredShedDatabaseError(error_detail(e))
 
 
 
@@ -776,203 +460,133 @@ class DB():
 
         try:
             self.main_client.close()
+        except AttributeError:
+            pass
+        try:
             self.meta_client.close()
         except AttributeError:
             pass
 
 
-    def _gen_batches(self, leak, source_id, batch_size=20000):
+    def add_accounts(self, batch, source_id, tries=3):
+        '''
+        accepts a list of Account() objects
+        '''
 
-        #self.log.debug(f'Batching leak: {leak.source.name}')
+        tries_left = int(tries)
+        errors = []
 
-        batch = []
-        for account in leak:
-            #self.log.debug(f'Batching account: {account}')
-            account_doc = account.document
-
-            if account_doc is not None:
-                batch.append(account_doc)
-                self.leak_overall += 1
-
-            if batch and ((self.leak_overall) % batch_size == 0):
-                yield batch
-                batch = []
-            
-        if batch:
-            yield batch
-
-
-    def _add_batches(self, batch_queue, result_queue, error_queue, source_id):
-
-        try:
-
-            max_attempts = 3
-            # unique_accounts = 0
-
-            if not self.metadata_only:
-                main_server = self.config['MONGO PRIMARY']['server']
-                main_port = int(self.config['MONGO PRIMARY']['port'])
-                main_db = self.config['MONGO PRIMARY']['db']
-
-                mongo_main_client = pymongo.MongoClient(main_server, main_port, username=self.mongo_user, password=self.mongo_pass)
-                mongo_main = mongo_main_client[main_db]
-
-            if self.use_metadata:
-                meta_server = self.config['MONGO METADATA']['server']
-                meta_port = int(self.config['MONGO METADATA']['port'])
-                meta_db = self.config['MONGO METADATA']['db']
-                mongo_meta_client = pymongo.MongoClient(meta_server, meta_port, username=self.mongo_user, password=self.mongo_pass)
-                mongo_meta = mongo_meta_client[meta_db]
+        while tries_left:
 
             try:
-                #sleep(1)
 
-                while 1:
-                    try:
-                        #self.log.info('[+] Getting batch')
-                        batch = batch_queue.get_nowait()
+                upserted_accounts = dict()
+                if self.meta_client:
+                    self._mongo_meta_add_batch(batch, source_id)
+                if self.main_client:
+                    upserted_accounts = self._mongo_main_add_batch(batch)
 
-                        if batch is None:
-                            break
-                        else:
-                            '''
-                            timeout_value = (int(len(batch) / 500)) + (5 * max_attempts) + 1
-                            try:
-                                with concurrent.futures.ThreadPoolExecutor(max_workers=2) as thread_executor:
+                return upserted_accounts
 
-                                    main_thread = thread_executor.submit(self._mongo_main_add_batch, mongo_main, source_id, copy.deepcopy(batch))
-                                    meta_thread = thread_executor.submit(self._mongo_meta_add_batch, mongo_meta, source_id, batch)
+            except pymongo.errors.PyMongoError as e:
+                tries_left -= 1
+                sleep(5)
+                errors.append(error_detail(e))
 
-                                num_inserted = main_thread.result(timeout=timeout_value)
-
-                            except concurrent.futures.TimeoutError:
-                                #error_queue.put('"main" mongodb thread timed out after {:,} seconds'.format(timeout_value))
-                                continue
-
-                            finally:
-                                unique_accounts += num_inserted
-                            '''
-
-                            try:
-
-                                if self.use_metadata:
-                                    upserted_accounts = self._mongo_meta_add_batch(mongo_meta, source_id, batch, error_queue)
-                                if not self.metadata_only:
-                                    upserted_accounts = self._mongo_main_add_batch(mongo_main, source_id, copy.deepcopy(batch), error_queue)
-
-                                result_queue.put(upserted_accounts)
-
-                            except pymongo.errors.PyMongoError as e:
-                                error = str(e)
-                                try:
-                                    error += (str(e.details))
-                                except AttributeError:
-                                    pass
-                                error_queue.put('Error in _add_batches():\n{}'.format(error))
-
-                    except queue.Empty:
-                        sleep(.1)
-                        continue
-
-            except KeyboardInterrupt:
-                pass
-
-            except Exception as e:
-                error_queue.put('Error in _add_batches():\n{}'.format(str(traceback.format_exc())))
-
-            finally:
-                try:
-                    mongo_main_client.close()
-                except:
-                    pass
-                try:
-                    mongo_meta_client.close()
-                except:
-                    pass
-                try:
-                    # send signal that thread is finished
-                    result_queue.put(None)
-                except:
-                    pass
-
-        except KeyboardInterrupt:
-            result_queue.put(None)
-            return
+        raise CredShedBatchError(f'Failed to add batch after {tries} tries ():\n' + "\n".join(errors))
 
 
 
-    @staticmethod
-    def _mongo_main_add_batch(_mongo, source_id, batch, error_queue, max_attempts=3):
+    def _mongo_main_add_batch(self, batch):
+
 
         unique_accounts = 0
-        attempts_left = int(max_attempts)
         mongo_batch = []
-        error_details = ''
 
-        # keeps track of unique accounts
+        # all_accounts holds {account_id: account} since the mongo result only includes the ID
         all_accounts = dict()
         upserted_accounts = dict()
 
-        for account_doc in batch:
-            _id = account_doc.pop('_id')
-            mongo_batch.append(pymongo.UpdateOne({'_id': _id}, {'$setOnInsert': account_doc}, upsert=True))
-            all_accounts[_id] = account_doc
+        for account in batch:
+            account = account.document
+            _id = account.pop('_id')
+            mongo_batch.append(pymongo.UpdateOne({'_id': _id}, {'$setOnInsert': account}, upsert=True))
+            all_accounts[_id] = account
 
-        while attempts_left > 0:
+        for _id in self.accounts.bulk_write(mongo_batch, ordered=False).upserted_ids.values():
+            upserted_accounts[_id] = None
+
+        # remove any account which is not unique
+        for _id in upserted_accounts.keys():
             try:
-
-                for _id in _mongo.accounts.bulk_write(mongo_batch, ordered=False).upserted_ids.values():
-                    upserted_accounts[_id] = None
-                # remove any account which is not unique
-                for _id in upserted_accounts.keys():
-                    try:
-                        upserted_accounts[_id] = all_accounts.pop(_id)
-                    except KeyError:
-                        continue
-                return upserted_accounts
-
-            # sleep for a bit and try again if there's an error
-            except (pymongo.errors.OperationFailure, pymongo.errors.InvalidOperation) as e:
-                error = '\nError adding account batch to main DB.  Attempting to continue.\n{}'.format(str(e)[:64])
-                try:
-                    error += ('\n' + str(e.details)[:256])
-                except AttributeError:
-                    pass
-                error_queue.put(error)
-                attempts_left -= 1
-                sleep(5)
+                upserted_accounts[_id] = all_accounts.pop(_id)
+            except KeyError:
                 continue
 
-        raise CredShedDatabaseError('Failed to add batch to main DB after {} tries'.format(max_attempts))
+        return upserted_accounts
 
 
 
-    @staticmethod
-    def _mongo_meta_add_batch(_mongo, source_id, batch, error_queue, max_attempts=3):
+    def _mongo_meta_add_batch(self, batch, source_id):
 
-        attempts_left = int(max_attempts)
-        mongo_tags_batch = []
+        mongo_batch = []
 
-        for account_doc in batch:
-            _id = account_doc['_id']
-            mongo_tags_batch.append(pymongo.UpdateOne({'_id': _id}, {'$addToSet': {'s': source_id}}, upsert=True))
+        for account in batch:
+            _id = account._id
+            mongo_batch.append(pymongo.UpdateOne({'_id': _id}, {'$addToSet': {'s': source_id}}, upsert=True))
 
-        while attempts_left > 0:
+        result = self.accounts_metadata.bulk_write(mongo_batch, ordered=False)
+        return result
+
+
+
+    def _get_main_client(self):
+
+        try:
+
             try:
+                main_server = config['MONGO PRIMARY']['server']
+                main_port = int(config['MONGO PRIMARY']['port'])
+                self.main_db_name = config['MONGO PRIMARY']['db']
+                mongo_user = config['MONGO GLOBAL']['user']
+                mongo_pass = config['MONGO GLOBAL']['pass']
+            except KeyError as e:
+                raise CredShedConfigError(str(e))
 
-                result = _mongo.account_tags.bulk_write(mongo_tags_batch, ordered=False)
-                return result
+            # main DB
+            mongo_client = pymongo.MongoClient(main_server, main_port, username=mongo_user, password=mongo_pass)
+            return mongo_client
 
-            # sleep for a bit and try again if there's an error
-            except (pymongo.errors.OperationFailure, pymongo.errors.InvalidOperation) as e:
-                error = '\nError adding account batch to meta DB.  Attempting to continue.\n{}'.format(str(e)[:64])
-                try:
-                    error += ('\n' + str(e.details)[:64])
-                except AttributeError:
-                    pass
-                error_queue.put(error)
-                attempts_left -= 1
-                sleep(5)
-                continue
+        except pymongo.errors.PyMongoError as e:
+            raise CredShedDatabaseError(error_detail(e))
 
-        raise CredShedDatabaseError('\nFailed to add batch to meta DB after {} tries'.format(max_attempts))
+
+    def _get_meta_client(self):
+
+        try:
+
+            try:
+                meta_server = config['MONGO METADATA']['server']
+                meta_port = int(config['MONGO METADATA']['port'])
+                self.meta_db_name = config['MONGO METADATA']['db']
+                mongo_user = config['MONGO GLOBAL']['user']
+                mongo_pass = config['MONGO GLOBAL']['pass']
+            except KeyError as e:
+                raise CredShedConfigError(str(e))
+
+            # meta DB (account metadata including source information, leak <--> account associations, etc.)
+            mongo_client = pymongo.MongoClient(meta_server, meta_port, username=mongo_user, password=mongo_pass)
+            return mongo_client
+
+        except pymongo.errors.PyMongoError as e:
+            raise CredShedDatabaseError(error_detail(e))
+
+
+    def __enter__(self):
+
+        return self
+
+
+    def __exit__(self, exception_type, exception_value, traceback):
+
+        self.close()
