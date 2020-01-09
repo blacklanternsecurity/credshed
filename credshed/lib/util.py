@@ -2,10 +2,12 @@
 
 # by TheTechromancer
 
-### MISC FUNCTIONS USED THROUGHOUT THE PROJECT ###
+### MISC FUNCTIONS USED THROUGHOUT THE CODEBASE ###
 
+import os
 import sys
 from . import filestore
+from pathlib import Path
 
 
 def clean_encoding(s):
@@ -88,3 +90,51 @@ def hash_file(filename):
 def size(filename):
 
     return filestore.util.size(filename)
+
+
+def recursive_file_list(paths):
+    '''
+    accepts single or multiple files/directories
+    yields filenames
+    '''
+    if not type(paths) == list:
+        paths = [paths]
+
+    paths = [Path(p).resolve() for p in paths]
+
+    for path in paths:
+
+        if path.is_file() and not path.is_symlink():
+            yield path
+
+        elif path.is_dir():
+            for dir_name, dirnames, filenames in os.walk(path):
+                for file in filenames:
+                    file = Path(dir_name) / file
+                    if file.is_file() and not file.is_symlink():
+                        yield file
+
+
+def bytes_to_human(_bytes):
+    '''
+    converts bytes to human-readable filesize
+    e.g. 1024 --> 1KB
+    '''
+
+    sizes = ['B', 'KB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB']
+    units = {}
+    count = 0
+    for size in sizes:
+        units[size] = pow(1024, count)
+        count +=1
+
+    for size in sizes:
+        if abs(_bytes) < 1024.0:
+            if size == sizes[0]:
+                _bytes = str(int(_bytes))
+            else:
+                _bytes = '{:.2f}'.format(_bytes)
+            return '{}{}'.format(_bytes, size)
+        _bytes /= 1024
+
+    raise ValueError

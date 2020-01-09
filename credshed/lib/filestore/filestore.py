@@ -15,15 +15,6 @@ from .decompress import *
 from ..config import config
 
 
-# set up logging
-log_file = '/var/log/credshed/filestore.log'
-log_level = logging.DEBUG
-log_format = '%(asctime)s\t%(levelname)s\t%(name)s\t%(message)s'
-try:
-    logging.basicConfig(level=log_level, filename=log_file, format=log_format)
-except (PermissionError, FileNotFoundError):
-    logging.basicConfig(level=log_level, filename='filestore.log', format=log_format)
-    sys.stderr.write(f'\n[!] Unable to create log file at {log_file}, logging to current directory\n\n')
 log = logging.getLogger('credshed.filestore')
 
 
@@ -77,9 +68,10 @@ class Filestore():
 
             else:
 
-                # skip the file if it's been deleted
+                # skip the file if it's been deleted or isn't a normal file
                 if not filename.is_file():
-                    log.warning(f'{filename} no longer exists')
+                    log.warning(f'{filename} does not exist or is not a normal file')
+                    continue
 
                 # skip the file if it's empty or very small
                 else:

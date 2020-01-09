@@ -22,15 +22,21 @@ class CredShedTimeoutError(CredShedError):
 class CredShedDatabaseError(CredShedError):
     pass
 
+class CredShedSourceError(CredShedError):
+    pass
+
 class AccountCreationError(CredShedError):
     pass
 
 class LineAbsorptionError(AccountCreationError):
     pass
 
-# TextParse-specific
+# Injestor-specific
 
-class TextParseError(CredShedError):
+class InjestorError(CredShedError):
+    pass
+
+class TextParseError(InjestorError):
     pass
 
 class TextParsePermissionError(TextParseError):

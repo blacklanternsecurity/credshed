@@ -343,14 +343,16 @@ use credshed
 db.createCollection("accounts")
 sh.enableSharding("credshed")
 sh.shardCollection("credshed.accounts", {_id: 1})
-db.accounts.insert({"_id" : "moc.elpmaxe|n4bQgYhMCbZLR53W", "email" : "test", "password" : "Password1" })' | sudo tee "${mongo_script_dir}/init-main_db.js"
+db.accounts.insert({"_id" : "moc.elpmaxe|n4bQgYhMCbZLR53W", "email" : "test", "password" : "Password1" })
+db.sources.insert({"_id" : NumberInt(1), "name" : "test", "modified_date": ISODate(), "import_finished": true, "created_date": ISODate(), "hash": "0000000000000000000000000000000000000000", "files": ["/tmp/test.txt"], "description": "test", "total_accounts": NumberInt(1), "unique_accounts": NumberInt(1), "filesize": NumberInt(26) })' | sudo tee "${mongo_script_dir}/init-main_db.js"
 
 
     echo '
 use credshed
-db.createCollection("account_tags")
+db.createCollection("account_metadata")
 sh.enableSharding("credshed")
-sh.shardCollection("credshed.account_tags", {_id: 1})' | sudo tee "${mongo_script_dir}/init-meta_db.js"
+sh.shardCollection("credshed.account_metadata", {_id: 1})
+db.accounts_metadata.insert({"_id" : "moc.elpmaxe|n4bQgYhMCbZLR53W", "s": [NumberInt(1)] })' | sudo tee "${mongo_script_dir}/init-meta_db.js"
 
 }
 

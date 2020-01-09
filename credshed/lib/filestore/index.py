@@ -42,6 +42,9 @@ class FilestoreIndex(MutableMapping):
         # get hash by filename
         self.file_index = dict()
 
+        # whether an attempt has been made to read the index
+        self.index_read = False
+
 
     def read(self):
 
@@ -61,11 +64,13 @@ class FilestoreIndex(MutableMapping):
                         # purge the entire entry
                         log.warning(f'Index is missing key {e} missing for {filehash}')
                         continue
+
                 log.info(f'Successfully read {len(self.hash_index):,} index entries')
 
         except (OSError, json.decoder.JSONDecodeError):
             log.error(f'Error reading index file {self.file}, starting fresh')
-            return dict()
+
+        self.index_read = True
 
 
     def write(self):
@@ -89,7 +94,11 @@ class FilestoreIndex(MutableMapping):
         '''
 
         if filehash is None:
-            filehash = self.hash(filename)
+            try:
+                filehash = self.hash(filename)
+            except FilestoreHashError as e:
+                log.error(e)
+                return
 
         try:
             filesize = size(filename)
@@ -226,13 +235,22 @@ class FilestoreIndex(MutableMapping):
             paths.append(path.resolve())
 
         for p in paths:
-            yield str(p.relative_to(self.dir))
+            try:
+                yield str(p.relative_to(self.dir))
+            except ValueError as e:
+                log.error(e)
 
 
     def hash(self, filename):
 
+        # make sure it's an actual file
+
+        resolved_filename = Path(filename).resolve()
+        if not resolved_filename.is_file():
+            raise FilestoreHashError(f'{filename} is not a normal file')
+
         # read the index if it hasn't been already
-        if not self.hash_index:
+        if not self.hash_index and not self.index_read:
             self.read()
 
         # try to get hash by filename

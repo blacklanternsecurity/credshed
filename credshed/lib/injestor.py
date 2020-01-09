@@ -5,71 +5,140 @@
 import logging
 from .db import DB
 from .errors import *
+import multiprocessing
+from time import sleep
+from queue import Empty
 from datetime import datetime, timedelta
 
 
-
+# set up logging
+log = logging.getLogger('credshed.injestor')
 
 
 class Injestor():
+    '''
+    Given a Source object, injests the contents into the database as fast as possible
+    '''
 
     def __init__(self, source, threads=4):
 
-        # set up logging
-        self.log = logging.getLogger('credshed.injestor')
-
         self.source = source
-
         self.threads = threads
-
         self.db = DB()
 
-
-    def injest(self):
-
-        start_time = datetime.now()
-
-        self.start()
-
-        end_time = datetime.now()
-        time_elapsed = (end_time - start_time).total_seconds()
-
-        if self.source.total_accounts > 0:
-            self.log.info('{:,}/{:,} ({:.2f}%) unique accounts in "{}".  Time elapsed: {:02d}:{:02d}:{:02d}'.format(
-                self.source.unique_accounts,
-                self.source.total_accounts,
-                ((self.source.unique_accounts/self.source.total_accounts)*100), 
-                self.source.filename,
-                # // == floor division
-                int(time_elapsed // 3600),
-                int((time_elapsed % 3600) // 60),
-                int(time_elapsed % 60)
-            ))
+        # queue for unique accounts
+        self.result_queue = multiprocessing.Queue()
 
 
-    def start(self):
 
-        self.log.debug('Adding source {}'.format(str(self.source)))
+    def start(self, force=False):
 
-        source_id = self.db.add_source(self.source)
+        log.info(f'Adding source {self.source.filename} using {self.threads:,} threads')
 
-        self.log.debug('Using {} child threads'.format(self.threads))
+        source = self.db.add_source(self.source)
 
-        unique_accounts = dict()
+        if source['import_finished'] is True and not force:
+            log.warning(f'Import already finished for {self.source.filename}, skipping')
 
-        batches = self._gen_batches()
-        for batch in batches:
-            with DB() as db:
-                upserted_accounts = db.add_accounts(batch, source_id)
-                unique_accounts.update(upserted_accounts)
-                self.source.unique_accounts += len(upserted_accounts)
+        else:
+            source_id = source['_id']
+            pool = [None] * self.threads
 
-        # update counters
-        self.db.add_source(self.source, import_finished=True)
+            for batch in self._gen_batches():
+                '''
+                upserted_accounts = self._injest(batch, source_id)
+                for a in upserted_accounts:
+                    yield a
+                '''
+            
+                try:
 
-        return unique_accounts
+                    # loop until batch has been submitted
+                    while 1:
+
+                        for unique_account in self.empty_result_queue():
+                            yield unique_account
 
 
+                        #self.injest(batch, source_id, self.result_queue)
+                        #assert False
+
+                        # make sure processes are started
+                        for i in range(len(pool)):
+                            process = pool[i]
+                            if process is None or not process.is_alive():
+                                if process is not None:
+                                    log.debug(f'Injestor process #{i+1} has finished')
+                                pool[i] = multiprocessing.Process(target=self.injest, args=(batch, source_id, self.result_queue), daemon=True)
+                                log.info(f'Starting new injestor process #{i+1}')
+                                pool[i].start()
+                                # move on to next batch
+                                assert False
+
+                        # prevent unnecessary CPU usage
+                        sleep(.1)
+
+                except AssertionError:
+                    continue
+
+
+            for unique_account in self.empty_result_queue():
+                yield unique_account
+
+            # wait until all threads are stopped:
+            while 1:
+                finished_threads = [p is None or not p.is_alive() for p in pool]
+                if all(finished_threads):
+                    break
+                else:
+                    log.debug(f'Waiting for {finished_threads.count(False):,} threads to finish for {self.source.filename}')
+                    sleep(1)
+
+                for unique_account in self.empty_result_queue():
+                    yield unique_account
+
+            # update counters
+            self.db.add_source(self.source, import_finished=True)
+
+
+
+    def empty_result_queue(self):
+
+        # make sure the result queue is empty
+        while 1:
+            try:
+                unique_accounts = self.result_queue.get_nowait()
+                log.debug(f'{len(unique_accounts):,} unique accounts')
+                try:
+                    log.error('Database error encountered:\n    ' + '\n'.join([str(e) for e in unique_accounts['errors']]))
+                except TypeError:
+                    for unique_account in unique_accounts:
+                        yield unique_account                
+            except Empty:
+                break
+
+
+    @staticmethod
+    def injest(batch, source_id, result_queue):
+
+        with DB() as db:
+
+            result_queue.put(db.add_accounts(batch, source_id))
+
+            # required so that the queue's .put() call finishes
+            sleep(.5)
+
+
+
+    @staticmethod
+    def _injest(batch, source_id):
+
+        upserted_accounts = []
+
+        with DB() as db:
+            upserted_accounts = db.add_accounts(batch, source_id)
+
+        return upserted_accounts
 
 
 

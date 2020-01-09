@@ -27,7 +27,22 @@ class Source():
             print(account)
     '''
 
-    def __init__(self, filename, deduplicate=False):
+
+    @classmethod
+    def from_doc(cls, doc):
+        '''
+        Create a Source() object from a dictionary
+        '''
+
+        try:
+            c = cls(doc.pop('files')[0], filesize=doc.pop('filesize'))
+            c.update(doc)
+            return c
+        except (KeyError, IndexError) as e:
+            raise CredShedSourceError(f'Failed to create Source object from db: {e}')
+
+
+    def __init__(self, filename, filesize=None, deduplicate=False):
 
         # Not set unless retrieved from DB
         self.id = None
@@ -35,11 +50,12 @@ class Source():
         # filename from which accounts are extracted
         self.filename = Path(filename).resolve()
         # filesize in bytes
-        try:
-            self.filesize = filestore.size(filename)
-        except FilestoreUtilError as e:
-            log.error(e)
-            self.filesize = 0
+        if filesize is None:
+            try:
+                self.filesize = filestore.size(filename)
+            except FilestoreUtilError as e:
+                log.error(e)
+                self.filesize = 0
         # set used for account deduplication
         self.accounts = set()
         # keeps track of unique accounts during import
@@ -83,6 +99,17 @@ class Source():
         return self._hash
 
 
+    def update(self, d):
+
+        allowed_fields = ['name', 'hash', 'description', 'created_date', 'modified_date', 'total_accounts', 'unique_accounts']
+
+        self.id = d.pop('_id')
+        for k,v in d.items():
+            if k in allowed_fields:
+                self.__dict__.update({k:v})
+
+
+
     def __iter__(self):
 
         for account in self.accounts:
@@ -91,15 +118,13 @@ class Source():
 
     def __str__(self):
 
-        s  = '{}:\n'.format(self.filename)
-        s += '  unique accounts: {:,}'.format(len(self))
-
-        return s
+        return f'{self.filename} (unique accounts: {len(self):,})'
 
 
     def __len__(self):
 
-        try:
-            return len(self.accounts)
-        except TypeError:
-            return 0
+        length = len(self.accounts)
+        if length > 0:
+            return length
+        else:
+            return self.unique_accounts

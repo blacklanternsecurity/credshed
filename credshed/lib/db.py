@@ -174,35 +174,33 @@ class DB():
 
         sources = []
 
-        if account is not None:
+        try:
 
-            try:
+            _id = ''
+            if type(account) == str:
+                _id = account
+            elif type(account) == Account:
+                _id = account._id
+            else:
+                raise TypeError
 
-                _id = ''
-                if type(account) == str:
-                    _id = account
-                elif type(account) == Account:
-                    _id = account._id
-                else:
-                    raise TypeError
+            source_ids = self.accounts_metadata.find_one({'_id': _id})['s']
 
-                source_ids = self.accounts_metadata.find_one({'_id': _id})['s']
+            for source_id in source_ids:
+                try:
+                    sources.append(self.get_source(source_id))
+                except CredShedDatabaseError:
+                    log.warning(f'No database entry found for source ID {source_id}')
+                    continue
 
-                for source_id in source_ids:
-                    try:
-                        sources.append(self.get_source(source_id))
-                    except CredShedDatabaseError:
-                        log.warning('No database entry found for source ID {}'.format(str(source_id)))
-                        continue
+        except KeyError as e:
+            raise CredShedError(f'Error retrieving source IDs from account "{_id}": {e}')
+        except TypeError as e:
+            pass
+            #log.debug('No source IDs found for account ID "{}": {}'.format(str(_id), str(e)))
 
-            except KeyError as e:
-                raise CredShedError('Error retrieving source IDs from account "{}": {}'.format(str(_id), str(e)))
-            except TypeError as e:
-                pass
-                #log.debug('No source IDs found for account ID "{}": {}'.format(str(_id), str(e)))
-
-            account_metadata = AccountMetadata(sources)
-            return account_metadata
+        account_metadata = AccountMetadata(sources)
+        return account_metadata
 
 
 
@@ -273,19 +271,23 @@ class DB():
 
             id_counter = self._make_source_id()
 
+            source_doc = {
+                'name': str(source.filename),
+                'hash': source.hash,
+                'files': [str(source.filename)],
+                'filesize': source.filesize,
+                'description': source.description,
+                'created_date': datetime.now(),
+                'modified_date': datetime.now(),
+                'total_accounts': (source.total_accounts if import_finished else 0),
+                'unique_accounts': (source.unique_accounts if import_finished else 0),
+                'import_finished': (True if import_finished else False)
+            }
+
             while 1:
                 try:
-                    self.sources.insert_one({
-                        '_id': id_counter,
-                        'name': (str(source.filename) if import_finished else ''),
-                        'hash': source.hash,
-                        'files': [str(source.filename)],
-                        'filesize': source.filesize,
-                        'description': (source.description if import_finished else ''),
-                        'modified_date': datetime.now(),
-                        'total_accounts': (source.total_accounts if import_finished else 0),
-                        'unique_accounts': (source.unique_accounts if import_finished else 0)
-                    })
+                    source_doc['_id'] = id_counter
+                    self.sources.insert_one(source_doc)                       
                     break
 
                 except pymongo.errors.DuplicateKeyError:
@@ -296,7 +298,7 @@ class DB():
                     raise CredShedDatabaseError(error_detail(e))
                     break
 
-            return id_counter
+            return source_doc
 
         # otherwise, update it
         else:
@@ -309,7 +311,8 @@ class DB():
                     },
                     '$set': {
                         'modified_date': datetime.now(),
-                        'total_accounts': source.total_accounts
+                        'total_accounts': source.total_accounts,
+                        'import_finished': True
                     },
                     '$inc': {
                         'unique_accounts': source.unique_accounts
@@ -317,7 +320,9 @@ class DB():
 
                 })
 
-            return source_in_db['_id']
+            # refresh data                
+            source_in_db = self.sources.find_one({'_id': source_in_db['_id']})
+            return source_in_db
 
 
 
@@ -325,10 +330,7 @@ class DB():
     def _make_source_id(self):
 
         # get the highest source._id
-        try:
-            id_counter = next(self.sources.find({}, {'_id': 1}, sort=[('_id', -1)], limit=1))['_id']
-        except StopIteration:
-            id_counter = 0
+        id_counter = self.highest_source_id()
 
         # make double-sure it doesn't exist yet
         while 1:
@@ -350,7 +352,7 @@ class DB():
         returns most recently added source ID, if applicable
         '''
 
-        most_recent_source_id = 0
+        highest_source_id = 0
         stats = []
 
         try:
@@ -358,49 +360,41 @@ class DB():
             if accounts:
                 accounts_stats = self.main_db.command('collstats', 'accounts', scale=1048576)
                 stats.append('[+] Account Stats (MB):')
-                for k in accounts_stats:
+                for k, v in accounts_stats.items():
                     if k not in ['wiredTiger', 'indexDetails', 'shards', 'raw']:
-                        stats.append('\t{}: {}'.format(k, accounts_stats[k]))
+                        stats.append(f'\t{k}: {v}')
             stats.append('')
 
             if sources:
 
-                sources_stats = dict()
+                all_sources = self.sources.find({})
 
-                # temporary code to move source counters into sources collection
-                '''
-                counters = self.main_db.counters.find({})[0]
-                for source_id, source_size in counters.items():
-                    try:
-                        source_id = int(source_id)
-                        source_size = int(source_size)
-                    except ValueError:
-                        continue
-                    self.sources.update_one({'_id': source_id}, {'$set': {'size': source_size}})
-                '''
-
-
-                for s in self.sources.find({}):
-                    source_id = s.pop('_id')
-                    try:
-                        sources_stats[source_id] = Source(
-                            name=s['name'],
-                            date=s['date'],
-                            misc=s['misc'],
-                            size=s['size'],
-                            hashtype=s['hashtype']
-                        )
-                    except TypeError as e:
-                        log.error(f'Error fetching source ID {source_id}: {e}')
-
-                if sources_stats:
+                if all_sources:
                     stats.append('[+] Leaks in DB:')
-                    for _id, source in sources_stats.items():
-                        stats.append(f'\t{_id}: {source}')
+
+                    for s in all_sources:
+                        try:
+                            if s['total_accounts'] > 0:
+                                num_files = len(s['files'])
+                                source_str = '{}: {} ({:,} accounts, {}, {})'.format(
+                                    s['_id'],
+                                    s['name'],
+                                    s['total_accounts'],
+                                    f'{num_files:,} ' + ('files' if num_files > 1 else 'file'),
+                                    bytes_to_human(s['filesize'])
+                                )
+                                stats.append(source_str)
+
+                        except KeyError as e:
+                            log.error(f'Missing key "{e}" in source ID {s["_id"]}')
+
                     stats.append('')
 
         except pymongo.errors.OperationFailure:
             stats.append('[!] No accounts added yet\n')
+
+        except pymongo.errors.PyMongoError as e:
+            log.error(error_detail(e))
 
         if db:
             db_stats = self.main_db.command('dbstats', scale=1048576)
@@ -413,18 +407,19 @@ class DB():
 
 
 
-    def most_recent_source_id(self):
+    def highest_source_id(self):
         '''
         returns source with highest ID
-        or None if there are no leaks loaded
+        or 1 if there are no leaks loaded
         '''
 
-        source_ids = [s['_id'] for s in list(self.sources.find({}, {'_id': True}))]
-        if source_ids:
-            source_ids.sort()
-            return source_ids[-1]
-        else:
-            return None
+        # get the highest source._id
+        try:
+            id_counter = next(self.sources.find({}, {'_id': 1}, sort=[('_id', -1)], limit=1))['_id']
+        except StopIteration:
+            id_counter = 1
+
+        return max(1, id_counter)
 
 
 
@@ -436,7 +431,7 @@ class DB():
         except KeyError:
             num_accounts_in_db = 0
         except pymongo.errors.PyMongoError as e:
-            raise CredShedDatabaseError(error_detail(error))
+            raise CredShedDatabaseError(error_detail(e))
 
         return int(num_accounts_in_db)
 
@@ -445,11 +440,8 @@ class DB():
     def get_source(self, _id):
 
         try:
-            s = self.sources.find_one({'_id': int(_id)})
-            try:
-                return Source(s['name'], s['hashtype'], s['misc'])
-            except (TypeError, KeyError):
-                return None
+            doc = self.sources.find_one({'_id': int(_id)})
+            return Source.from_doc(doc)
 
         except pymongo.errors.PyMongoError as e:
             raise CredShedDatabaseError(error_detail(e))
@@ -471,6 +463,9 @@ class DB():
     def add_accounts(self, batch, source_id, tries=3):
         '''
         accepts a list of Account() objects
+        returns unique (new) Account() objects
+        if error was encountered, returns dictionary:
+            {'errors': [error1, error2, ...]}
         '''
 
         tries_left = int(tries)
@@ -494,6 +489,7 @@ class DB():
                 errors.append(error_detail(e))
 
         raise CredShedBatchError(f'Failed to add batch after {tries} tries ():\n' + "\n".join(errors))
+        return {'errors': errors}
 
 
 
@@ -508,9 +504,9 @@ class DB():
         upserted_accounts = dict()
 
         for account in batch:
-            account = account.document
-            _id = account.pop('_id')
-            mongo_batch.append(pymongo.UpdateOne({'_id': _id}, {'$setOnInsert': account}, upsert=True))
+            account_doc = account.document
+            _id = account_doc.pop('_id')
+            mongo_batch.append(pymongo.UpdateOne({'_id': _id}, {'$setOnInsert': account_doc}, upsert=True))
             all_accounts[_id] = account
 
         for _id in self.accounts.bulk_write(mongo_batch, ordered=False).upserted_ids.values():
@@ -523,7 +519,7 @@ class DB():
             except KeyError:
                 continue
 
-        return upserted_accounts
+        return list(upserted_accounts.values())
 
 
 

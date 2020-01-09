@@ -2,61 +2,45 @@
 
 # by TheTechromancer
 
-'''
-TODO:
-    - when importing, prompt user for confirmation (with first / last 10 files and total count)
-    - performance benchmarks (4x 500GB Samsung SSDs in LVM RAID 0):
-        - 4 shards:
-            - >> 3,666 files completed in 4 days, 2:33:34 <<
-            - [+] Searched 1,021,786,928 accounts in 0:00:00.06 seconds
-        - 10 shards:
-            - >> 4,549/29,551 (15.4%) files completed in 3 days, 7:17:19 <<
-            - [+] Searched 1,174,146,654 accounts in 0:00:00.07 seconds
-'''
 
 import sys
 import logging
 import argparse
 from credshed import *
+from time import sleep
 from pathlib import Path
 from datetime import datetime
+from credshed.lib import logger
 from multiprocessing import cpu_count
 
 # set up logging
 log = logging.getLogger('credshed.cli')
-log.setLevel(logging.DEBUG)
-
-# log to stderr
-console = logging.StreamHandler()
-console.setLevel(logging.DEBUG)
-# set a format which is simpler for console use
-formatter = logging.Formatter('[%(levelname)s] %(message)s')
-# tell the handler to use this format
-console.setFormatter(formatter)
-# add the handler to the root logger
-logging.getLogger('credshed').addHandler(console)
-
 
 
 class CredShedCLI(CredShed):
 
-    def __init__(self, stdout=False, unattended=False, deduplication=False, threads=2):
+    def __init__(self, options):
 
-        super().__init__(stdout=stdout, unattended=unattended, deduplication=deduplication, threads=threads)
+        super().__init__(stdout=options.stdout)
+
+        self.options = options
 
         if not self.db.meta_client:
-            self.log.warning('Continuing without metadata support')
+            log.warning('Continuing without metadata support')
 
 
-    def search(self, query, query_type, verbose=False):
+    def search(self, query, query_type):
 
         start_time = datetime.now()
         num_accounts_in_db = self.db.account_count()
 
         num_results = 0
-        for account in super().search(query, query_type=query_type, verbose=verbose):
-            print(str(account))
-            if verbose:
+        for account in super().search(query, query_type=query_type, limit=self.options.limit):
+            if self.options.print0:
+                sys.stdout.buffer.write(account.bytes + b'\n')
+            else:
+                print(str(account))
+            if self.options.verbose:
                 metadata = self.db.fetch_account_metadata(account)
                 if metadata:
                     print(metadata)
@@ -64,8 +48,8 @@ class CredShedCLI(CredShed):
 
         end_time = datetime.now()
         time_elapsed = (end_time - start_time)
-        self.log.info('Searched {:,} accounts in {} seconds'.format(num_accounts_in_db, str(time_elapsed)[:-4]))
-        self.log.info('{:,} results for "{}"'.format(num_results, '|'.join(query)))
+        log.info(f'Searched {num_accounts_in_db:,} accounts in {str(time_elapsed)[:-4]} seconds')
+        log.info(f'{num_results:,} results for "{query}"')
 
 
     def stats(self):
@@ -73,14 +57,82 @@ class CredShedCLI(CredShed):
         print(super().stats())
 
 
-    def delete_leaks(self, source_ids=[]):
+    def import_files(self):
+
+        total_unique_accounts = 0
+
+        # files that have at least one account (even if it's not unique)
+        interesting_files = 0
+
+        major_start_time = datetime.now()
+
+        filelist = list(util.recursive_file_list(self.options.injest))
+        log.info(f'Importing {len(filelist):,} files')
+        #sleep(2)
+
+        try:
+            for filename in filelist:
+
+                log.info(f'Parsing file {filename}')
+
+                minor_start_time = datetime.now()
+
+                try:
+                    unique_accounts, total_accounts = self.import_file(
+                        filename,
+                        unattended=self.options.unattended,
+                        threads=self.options.threads,
+                        show=options.show_unique
+                    )
+                    if total_accounts > 0:
+                        interesting_files += 1
+                    if unique_accounts > 0:
+                        total_unique_accounts += unique_accounts
+
+                    end_time = datetime.now()
+                    time_elapsed = (end_time - minor_start_time).total_seconds()
+
+                    if total_accounts > 0:
+                        log.info('{:,}/{:,} ({:.2f}%) new accounts in "{}"  Time elapsed: {:02d}:{:02d}:{:02d}'.format(
+                            unique_accounts,
+                            total_accounts,
+                            ((unique_accounts / total_accounts) * 100), 
+                            filename,
+                            # // == floor division
+                            int(time_elapsed // 3600),
+                            int((time_elapsed % 3600) // 60),
+                            int(time_elapsed % 60)
+                        ))
+
+                except InjestorError as e:
+                    log.error(f'Injestor Error: {e}')
+                    continue
+
+        except KeyboardInterrupt:
+            sys.stderr.write('\n')
+            log.warning('Import operations cancelled')
+            pass
+
+        end_time = datetime.now()
+        time_elapsed = (end_time - major_start_time).total_seconds()
+
+        log.info('{:,} unique accounts from {:,} files in {:02d}:{:02d}:{:02d}'.format(
+            total_unique_accounts,
+            interesting_files,
+            int(time_elapsed // 3600),
+            int((time_elapsed % 3600) // 60),
+            int(time_elapsed % 60)
+        ))
+
+
+    def delete_leak(self):
         
         try:
 
-            if source_ids:
+            if self.options.delete_leak:
 
                 to_delete = {}
-                for source_id in number_range(source_ids):
+                for source_id in number_range(self.options.delete_leak):
                     source_info = (self.db.get_source(source_id))
                     if source_info is not None:
                         to_delete[source_id] = str(source_id) + ': ' + str(source_info)
@@ -90,7 +142,7 @@ class CredShedCLI(CredShed):
                     if not input('OK? [Y/n] ').lower().startswith('n'):
                         start_time = datetime.now()
 
-                        self.log.debug(errprint('Deleting accounts from: {}'.format(', '.join(to_delete.values()))))
+                        log.debug(errprint('Deleting accounts from: {}'.format(', '.join(to_delete.values()))))
 
                         for source_id in to_delete:
                             self.delete_leak(source_id)
@@ -99,9 +151,9 @@ class CredShedCLI(CredShed):
                         time_elapsed = (end_time - start_time)
 
                         errprint('\nDeletion finished.  Time Elapsed: {}'.format(str(time_elapsed).split('.')[0]))
-                        self.log.debug('Deletion of {} finished.  Time Elapsed: {}\n'.format(', '.join(to_delete.values()), str(time_elapsed).split('.')[0]))
+                        log.debug('Deletion of {} finished.  Time Elapsed: {}\n'.format(', '.join(to_delete.values()), str(time_elapsed).split('.')[0]))
                 else:
-                    self.log.warning('No valid leaks specified were specified for deletion')
+                    log.warning('No valid leaks specified were specified for deletion')
 
             else:
 
@@ -109,16 +161,16 @@ class CredShedCLI(CredShed):
 
                     assert self.db.sources.estimated_document_count() > 0, 'No more leaks in DB'
                     self.db.stats()
-                    most_recent_source_id = self.db.most_recent_source_id()
+                    highest_source_id = self.db.highest_source_id()
 
                     try:
-                        to_delete = [input('Enter ID(s) to delete [{}] (CTRL+C when finished): '.format(most_recent_source_id))] or [most_recent_source_id]
+                        to_delete = [input(f'Enter ID(s) to delete [{highest_source_id}] (CTRL+C when finished): ')] or [highest_source_id]
                     except ValueError:
                         errprint('[!] Invalid entry', end='\n\n')
                         sleep(1)
                         continue
 
-                    self.delete_leaks(to_delete)
+                    self.delete_leak(to_delete)
 
 
         except KeyboardInterrupt:
@@ -130,56 +182,57 @@ class CredShedCLI(CredShed):
 def main(options):
 
     try:
-        cred_shed = CredShedCLI(stdout=options.stdout, unattended=options.unattended, \
-            deduplication=options.deduplication, threads=options.threads)
+        credshed = CredShedCLI(options)
     except CredShedError as e:
         log.critical('{}: {}\n'.format(e.__class__.__name__, str(e)))
         sys.exit(1)
 
     options.query_type = options.query_type.strip().lower()
-    assert options.query_type in ['auto', 'email', 'domain', 'username'], 'Invalid query type: {}'.format(str(options.query_type))
+    assert options.query_type in ['auto', 'email', 'domain', 'username'], f'Invalid query type: {options.query_type}'
 
     # if we're importing stuff
     try:
-        if options.add:
-            cred_shed.import_file(options.add[0])
+        if options.injest:
+
+            credshed.import_files()
 
         elif options.delete_leak is not None:
-            cred_shed.delete_leaks(options.delete_leak)
+            credshed.delete_leak()
 
         if options.search:
-            for keyword in options.search:
 
-                # auto-detect query type
-                if options.query_type == 'auto':
-                    if Account.is_email(keyword):
-                        options.query_type = 'email'
-                        log.info('Searching by email: "{}"'.format(keyword))
-                    elif re.compile(r'^([a-zA-Z0-9_\-\.]*)\.([a-zA-Z]{2,8})$').match(keyword):
-                        options.query_type = 'domain'
-                        log.info('Searching by domain: "{}"'.format(keyword))
-                    else:
-                        raise CredShedError('Failed to auto-detect query type, please specify with --query-type')
-                        return
-                        # options.query_type = 'username'
-                        # errprint('[+] Searching by username')
+            keyword = options.search[0]
 
-                cred_shed.search(options.search, query_type=options.query_type, verbose=options.verbose)
+            # auto-detect query type
+            if options.query_type == 'auto':
+                if Account.is_email(keyword):
+                    query_type = 'email'
+                    log.debug('Searching by email: "{}"'.format(keyword))
+                elif re.compile(r'^([A-Z0-9_\-\.]*)\.([A-Z]{2,8})$', re.I).match(keyword):
+                    query_type = 'domain'
+                    log.debug('Searching by domain: "{}"'.format(keyword))
+                else:
+                    raise CredShedError('Failed to auto-detect query type, please specify with --query-type')
+                    return
+                    # options.query_type = 'username'
+                    # errprint('[+] Searching by username')
+
+            credshed.search(options.search, query_type)
 
         if options.stats:
-            cred_shed.stats()
+            credshed.stats()
 
     except CredShedError as e:
         log.error('{}: {}\n'.format(e.__class__.__name__, str(e)))
 
     except KeyboardInterrupt:
-        cred_shed.STOP = True
+        credshed.STOP = True
         errprint('\n[!] Stopping CLI, please wait for threads to finish\n')
         return
 
     finally:
         # close mongodb connection
-        cred_shed.db.close()
+        credshed.db.close()
         
 
 
@@ -193,12 +246,15 @@ if __name__ == '__main__':
 
     parser.add_argument('search',                       nargs='*',                      help='search term(s)')
     parser.add_argument('-q', '--query-type',           default='auto',                 help='query type (email, domain, or username)')
-    parser.add_argument('-a', '--add',      type=Path,  nargs='+',                      help='add files or directories to the database')
+    parser.add_argument('-i', '--injest',   type=Path,  nargs='+',                      help='import files or directories into the database')
     parser.add_argument('-t', '--stats',    action='store_true',                        help='show all imported leaks and DB stats')
     parser.add_argument('-s', '--stdout',   action='store_true',                        help='write output to stdout instead of database (null-byte delimited, use tr \'\\0\')')
     parser.add_argument('-d', '--delete-leak',          nargs='*',                      help='delete leak(s) from database, e.g. "1-3,5,7-9"', metavar='SOURCE_ID')
     parser.add_argument('-dd', '--deduplication',       action='store_true',            help='deduplicate accounts ahead of time (lots of memory usage on large files)')
     parser.add_argument('--threads',        type=int,   default=default_threads,        help='number of threads for import operations')
+    parser.add_argument('--show-unique',                action='store_true',            help='during import, print unique accounts')
+    parser.add_argument('--print0',                     action='store_true',            help='delimit by null byte instead of colon')
+    parser.add_argument('--limit',                      type=int,                       help='limit number of results (default: unlimited)')
     parser.add_argument('-u', '--unattended',           action='store_true',            help='auto-detect import fields without user interaction')
     parser.add_argument('-v', '--verbose',              action='store_true',            help='display all available data for each account')
     parser.add_argument('--debug',                      action='store_true',            help='display debugging info')
@@ -212,10 +268,10 @@ if __name__ == '__main__':
         options = parser.parse_args()
 
         if options.debug:
-            console.setLevel(logging.DEBUG)
+            logging.getLogger('credshed').setLevel(logging.DEBUG)
             options.verbose = True
         else:
-            console.setLevel(logging.INFO)
+            logging.getLogger('credshed').setLevel(logging.INFO)
 
         main(options)
 

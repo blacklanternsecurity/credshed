@@ -57,7 +57,11 @@ class TextParse():
         # input_position --> output_position
         self.mapping = dict()
 
-        self.gather_info()
+        try:
+            self.gather_info()
+        except TextParseError as e:
+            if strict:
+                raise
             
 
 
@@ -263,7 +267,7 @@ class TextParse():
         if delimiter is None:
             delimiter = self.input_delimiter
 
-        # handle the classic "semicolon instead of colon" problem
+        # handle the unfortunate use of semicolons in place of colons
         for i in range(len(line)):
             char = line[i:i+1]
             if char == delimiter:
@@ -318,7 +322,7 @@ class TextParse():
         returns an Account() object
         '''
 
-        log.debug(f'ABSORBING {line}')
+        #log.debug(f'ABSORBING {line}')
 
         # try the common email:password format
         try:

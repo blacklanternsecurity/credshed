@@ -6,19 +6,13 @@ import sys
 import logging
 import argparse
 from pathlib import Path
+from credshed.lib import logger
 from credshed.lib.errors import *
 from credshed.lib.filestore import *
 
 
-# log to stderr
-console = logging.StreamHandler()
-console.setLevel(logging.DEBUG)
-# set a format which is simpler for console use
-formatter = logging.Formatter('[%(levelname)s] %(message)s')
-# tell the handler to use this format
-console.setFormatter(formatter)
-# add the handler to the root logger
-logging.getLogger('credshed.filestore').addHandler(console)
+# set up logging
+log = logging.getLogger('credshed.filestore.cli')
 
 
 
@@ -63,24 +57,24 @@ if __name__ == '__main__':
         options = parser.parse_args()
 
         if options.debug:
-            console.setLevel(logging.DEBUG)
+            logging.getLogger('credshed').setLevel(logging.DEBUG)
             options.verbose = True
         else:
-            console.setLevel(logging.INFO)
+            logging.getLogger('credshed').setLevel(logging.INFO)
 
         main(options)
 
     except AssertionError as e:
-        sys.stderr.write(f'\n\n[!] AssertionError {e}\n\n')
+        log.error(f'AssertionError {e}')
         sys.exit(2)
 
     except CredShedError as e:
-        sys.stderr.write(f'\n\n[!] CredShedError {e}\n\n')
+        log.error(f'CredShedError {e}')
         sys.exit(2)
 
     except argparse.ArgumentError as e:
-        sys.stderr.write(f'\n\n[!] {e}\n[!] Check your syntax\n')
+        log.error(f'{e} - Check your syntax')
         sys.exit(2)
 
     except (KeyboardInterrupt, BrokenPipeError):
-        sys.stderr.write('\n\n[!] Interrupted\n')
+        log.error(f'Interrupted')

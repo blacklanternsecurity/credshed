@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 
 # by TheTechromancer
+# Original Author: Jordan Wright
+# Modified by: Moez @ CriticalStart
 
 import io
 import re
@@ -12,10 +14,10 @@ import urllib
 import logging
 import requests
 import threading
-from ..leak import *
 from ..config import *
 from ..errors import *
 from time import sleep
+from ..account import *
 from pathlib import Path
 from datetime import datetime, timedelta
 

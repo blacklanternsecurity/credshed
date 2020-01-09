@@ -108,8 +108,7 @@ class Decompress(ShellScript):
             if magic_type in self.file_type:
                 log.info(f'Compression type "{magic_type}" detected in {self.filename}')
                 self.mkdir(self.extract_dir)
-                file_hash = hash_file(self.filename)
-                write_metadata(self.filename, file_hash)
+                write_metadata(self.filename, self.hash)
                 log.debug(f'>> {" ".join(cmd_list)}')
                 try:
                     sp.run(cmd_list, check=True)

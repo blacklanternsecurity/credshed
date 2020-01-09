@@ -2,13 +2,11 @@
 
 # by TheTechromancer
 
-
 import re
 import base64
 import hashlib
 from .util import *
 from .errors import *
-
 
 
 

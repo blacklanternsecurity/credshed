@@ -1,29 +1,17 @@
 #!/usr/bin/env python3
 
 # by TheTechromancer
-# Original Author: Jordan Wright
-# Modified by: Moez @ CriticalStart
 
 import sys
 import logging
 import argparse
 from credshed import *
 from pathlib import Path
+from credshed.lib import logger
 from credshed.lib.scraper import *
 
 # set up logging
-log = logging.getLogger('credshed.pastebin-cli')
-log.setLevel(logging.DEBUG)
-
-# log INFO and up to stderr
-console = logging.StreamHandler()
-console.setLevel(logging.DEBUG)
-# set a format which is simpler for console use
-formatter = logging.Formatter('[%(levelname)s] %(message)s')
-# tell the handler to use this format
-console.setFormatter(formatter)
-# add the handler to the root logger
-logging.getLogger('credshed').addHandler(console)
+log = logging.getLogger('credshed.scraper.cli')
 
 
 def main(options):
