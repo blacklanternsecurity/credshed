@@ -5,10 +5,11 @@
 import sys
 import logging
 import argparse
-from credshed import *
+from lib import logger
+from lib.errors import *
 from pathlib import Path
-from credshed.lib import logger
-from credshed.lib.scraper import *
+from lib.scraper import *
+from lib.credshed import *
 
 # set up logging
 log = logging.getLogger('credshed.scraper.cli')
@@ -65,9 +66,9 @@ if __name__ == '__main__':
         assert not (options.no_metadata and options.metadata_only), "Conflicting options: --no-metadata and --only-metadata"
 
         if options.debug:
-            console.setLevel(logging.DEBUG)
+            logging.getLogger('credshed').setLevel(logging.DEBUG)
         else:
-            console.setLevel(logging.INFO)
+            logging.getLogger('credshed').setLevel(logging.INFO)
 
         main(options)
 

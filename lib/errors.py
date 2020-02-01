@@ -10,6 +10,9 @@ class CredShedError(Exception):
 class CredShedUtilError(CredShedError):
     pass
 
+class CredShedValidationError(CredShedError):
+    pass
+
 class CredShedConfigError(CredShedError):
     pass
 

@@ -9,8 +9,10 @@ from ..errors import *
 from time import sleep
 from ..account import *
 from pathlib import Path
+from .. import validation
 from datetime import datetime
 from statistics import mode, StatisticsError
+from ..validation import email_regex_search_bytes
 
 
 # set up logging
@@ -57,11 +59,8 @@ class TextParse():
         # input_position --> output_position
         self.mapping = dict()
 
-        try:
+        if strict:
             self.gather_info()
-        except TextParseError as e:
-            if strict:
-                raise
             
 
 
@@ -86,7 +85,7 @@ class TextParse():
             raise TextParseError(f'Error reading (or empty) file: {self.filename}')
 
         self.input_delimiter = self._get_delimiter(all_lines)
-        self._adaptive_print(f'[+] Detected delimiter: {self.input_delimiter}')
+        log.info(f'Detected delimiter: {self.input_delimiter}')
 
         # confirm delimiter if not unattended
         if not self.unattended:
@@ -101,7 +100,7 @@ class TextParse():
         except StatisticsError:
             self.num_input_fields = 0
 
-        self._adaptive_print(f'[+] {self.num_input_fields:,} fields detected')
+        log.info(f'{self.num_input_fields:,} fields detected')
 
         if self.num_input_fields < 2:
             if self.unattended:
@@ -134,14 +133,14 @@ class TextParse():
             
                 # assume passwords if we already have username or email
                 if any([x in self.mapping.values() for x in [self.fields['e'], self.fields['u']]]):
-                    self._adaptive_print(f'[+] Assuming passwords in column #{unknown_fields[0]+1}')
+                    log.info(f'Assuming passwords in column #{unknown_fields[0]+1}')
                     self.password_field = unknown_fields[0]
                     self.mapping[unknown_fields[0]] = self.fields['p']
                     unknown_fields = []
 
                 # assume usernames if we already have hashes or passwords
                 elif any([x in self.mapping.values() for x in [self.fields['h'], self.fields['p']]]):
-                    self._adaptive_print(f'[+] Assuming usernames in column #{unknown_fields[0]+1}')
+                    log.info(f'Assuming usernames in column #{unknown_fields[0]+1}')
                     self.mapping[unknown_fields[0]] = self.fields['u']
                     unknown_fields = []
 
@@ -150,9 +149,9 @@ class TextParse():
                 # assume usernames and passwords
                 if len(unknown_fields) == 2 and not any([x in self.mapping.values() for x in [self.fields['e'], self.fields['u']]]):
                     self.password_field = unknown_fields[1]
-                    self._adaptive_print(f'[+] Assuming usernames in column #{unknown_fields[0]+1}')
+                    log.info(f'Assuming usernames in column #{unknown_fields[0]+1}')
                     self.mapping[unknown_fields[0]] = self.fields['u']
-                    self._adaptive_print(f'[+] Assuming passwords in column #{unknown_fields[1]+1}')
+                    log.info(f'Assuming passwords in column #{unknown_fields[1]+1}')
                     self.mapping[unknown_fields[1]] = self.fields['p']
                     unknown_fields = []
 
@@ -167,13 +166,13 @@ class TextParse():
             for i in unknown_fields:
                 column = columns[i]
                 if all([field == '' for field in column]):
-                    self._adaptive_print('[+] Skipping blank column')
+                    log.info('Skipping blank column')
                     continue
 
                 sample_len = 20
                 for f in random.sample(column, len(column)):
                     if f:
-                        self._adaptive_print(f'  {f}')
+                        log.info(f'  {f}')
                         sample_len -= 1
                     if sample_len <= 0:
                         break
@@ -196,26 +195,26 @@ class TextParse():
                     raise FieldDetectionError(f'Unknown column in {self.filename}')
 
                 # otherwise, ask user
-                self._adaptive_print('=' * 60)
-                self._adaptive_print('[?] Which column is this?')
-                self._adaptive_print('=' * 60)
+                log.warning('=' * 60)
+                log.warning('[?] Which column is this?')
+                log.warning('=' * 60)
                 field = input('[E]mail | [U]ser | [P]assword | [H]ash | [M]isc | [enter] to skip > ').strip().lower()
                 if any([field.startswith(f) for f in self.fields.keys()]):
                     self.mapping[i] = self.fields[field[0]]
                     if field == 'p':
                         self.password_field = i
                 elif not field:
-                    self._adaptive_print('[*] Skipped')
+                    log.warning('Skipped')
                     continue
                 else:
-                    self._adaptive_print('[!] Please try again')
+                    log.warning('Please try again')
                     sleep(1)
 
             # must have at least two fields
             if not (any([i in self.mapping.values() for i in (self.fields['u'], self.fields['e'])]) and \
                 any([i in self.mapping.values() for i in (self.fields['p'], self.fields['h'], self.fields['m'])])):
                 #raise ValueError('Not enough fields mapped in {}'.format(file))
-                self._adaptive_print('[!] Not enough fields mapped')
+                log.error('Not enough fields mapped')
                 self.mapping.clear()
                 unknown_fields = list(range(self.num_input_fields))
                 continue
@@ -230,29 +229,29 @@ class TextParse():
                     continue
 
             # display and confirm selection
-            self._adaptive_print(('=' * 60))
-            self._adaptive_print('email:username:password:misc/description')
-            self._adaptive_print('=' * 60)
+            log.info(('=' * 60))
+            log.info('email:username:password:misc/description')
+            log.info('=' * 60)
             for _ in range(min(20, len(translated_lines))):
                 line = random.choice(translated_lines)
                 translated_lines.remove(line)
                 #try:
-                self._adaptive_print(' ' + line)
+                log.info(' ' + line)
                 #    #self._adaptive_print(line.decode().replace(self.output_delimiter.decode(), ':'))
                 #except UnicodeDecodeError:
                 #    continue
-            self._adaptive_print('=' * 60)
+            log.info('=' * 60)
 
             positions_taken = set()
             for in_index in self.mapping:
                 for fieldname, position in self.fields.items():
                     if self.mapping[in_index] == position:
                         if position not in positions_taken:
-                            self._adaptive_print(f'Column #{in_index+1} -> {fieldname}')
+                            log.info(f'Column #{in_index+1} -> {fieldname}')
                             positions_taken.add(position)
 
             if self.unattended:
-                self._adaptive_print(f'[+] Unattended parsing of {self.filename} was successful')
+                self._adaptive_print(f'Unattended parsing of {self.filename} was successful')
                 self.columns_mapped = True
             else:
                 if not input('\nOK? [Y/n] ').lower().startswith('n'):
@@ -317,9 +316,9 @@ class TextParse():
 
     def absorb_line(self, line):
         '''
-        sloppy function which takes a line and looks for an email address
-        the rest of the line is placed in the "misc" field
-        returns an Account() object
+        sloppy function which takes a line and looks for email addresses
+        each email is extracted along with the surrounding text, which is placed into the "misc" field
+        yields Account() objects
         '''
 
         #log.debug(f'ABSORBING {line}')
@@ -333,26 +332,28 @@ class TextParse():
         except (ValueError, AccountCreationError) as e:
             #log.debug(str(e))
 
-            email_scanner = Account.email_regex_search_bytes.scanner(line)
+            # find every matching email in the line
+            matches = [(0,0)] + [m.span() for m in email_regex_search_bytes.finditer(line)] + [(len(line),0)]
 
-            while 1:
+            # for each match
+            for i in range(1, len(matches)-1):
 
-                match = email_scanner.search()
-                if not match:
-                    break
+                # find where the current email starts and ends
+                startpos,endpos = matches[i]
+                email = line[startpos:endpos]
 
+                # find where the previous email ends
+                context_start = matches[i-1][-1]
+                # find where the next email starts
+                context_end = matches[i+1][0]
+                # limit to 250 characters on each side
+                left_side = line[context_start:startpos][-250:]
+                right_side = line[endpos:context_end][:250]
+
+                if len(left_side) > 1 or len(right_side) > 1:
+                    yield Account(email=email, misc=left_side + b'@' + right_side)
                 else:
-                    startpos, endpos = match.span()
-                    email = line[startpos:endpos]
-
-                    # take the closest 500 characters
-                    left_side = line[max(0, startpos-250):startpos]
-                    right_side = line[endpos:endpos+250]
-
-                    if len(left_side) + len(right_side) > 2:
-                        yield Account(email=email, misc=left_side + b'@' + right_side)
-                    else:
-                        yield Account(email=email)
+                    yield Account(email=email)
 
         # if we got here, this line doesn't deserve to live
         raise LineAbsorptionError(f'Unable to parse line: {str(line)[:80]}')
@@ -439,12 +440,12 @@ class TextParse():
 
         # print 20 random lines
         l = [_ for _ in lines]
-        self._adaptive_print('\n' + '=' * 60)
+        log.warning('=' * 60)
         for _ in range(min(20, len(lines))):
             rand_choice = random.choice(l)
             l.remove(rand_choice)
-            self._adaptive_print(' ' + str(rand_choice)[2:-1])
-        self._adaptive_print('=' * 60)
+            log.warning(' ' + str(rand_choice)[2:-1])
+        log.warning('=' * 60)
         self.input_delimiter = input(f'Delimiter [{str(self.input_delimiter)[2:-1]}] > ').encode() or self.input_delimiter
 
         # handle case where delimiter is hexidecimal
@@ -467,7 +468,7 @@ class TextParse():
 
             self.input_delimiter = new_delimiter
 
-        self._adaptive_print(f'[+] Using delimiter: {self.input_delimiter}')
+        log.info(f'Using delimiter: {self.input_delimiter}')
 
 
 
@@ -499,9 +500,9 @@ class TextParse():
                 continue
 
             # detect emails
-            num_emails = [Account.is_fuzzy_email(field) for field in column].count(True)
+            num_emails = [validation.is_fuzzy_email(field) for field in column].count(True)
             if (num_emails / len(lines) > self.threshold) and not self.fields['e'] in self.mapping.values():
-                self._adaptive_print(f'[+] Detected emails in column #{i+1}')
+                log.info(f'Detected emails in column #{i+1}')
                 self.mapping[i] = self.fields['e']
 
             else:
@@ -510,7 +511,7 @@ class TextParse():
                 skip_chars = ['0123456789-.:_/ \t']
                 if ( [all([char in string.digits for char in field]) for field in column].count(True)/len(lines) > self.threshold ) and \
                 not ([field.upper() == 'NULL' for field in column].count(True)/len(lines) > self.threshold ):
-                    self._adaptive_print('[+] Skipping numeric field')
+                    log.info('Skipping numeric field')
 
                 # detect hashes
                 # all non-blank fields in column must be the same length
@@ -519,7 +520,7 @@ class TextParse():
                 elif random_field_length >= 12 and \
                     [len(field) == random_field_length for field in column_no_blanks].count(True)/len(column_no_blanks) > self.threshold and \
                     [all([char.lower() in 'abcdef0123456789' for char in field]) for field in column_no_blanks].count(True)/len(column_no_blanks) > self.threshold:
-                        self._adaptive_print(f'[+] Detected hashes in column #{i+1}')
+                        log.info(f'Detected hashes in column #{i+1}')
                         self.mapping[i] = self.fields['h']
 
                 else:
@@ -568,7 +569,7 @@ class TextParse():
         try:
             with open(str(self.filename), 'rb') as f:
                 for line in f:
-                    line = line[0:self.max_line_length].strip(b'\r\n')
+                    line = line.strip(b'\r\n')
                     try:
                         if self.strict:
                             for account in self.translate_line(line):

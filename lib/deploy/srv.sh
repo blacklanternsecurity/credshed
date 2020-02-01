@@ -19,6 +19,7 @@ Usage: ${0##*/} [option]
         stop    stop containers
         clean   remove artifacts such as docker containers & images
         delete  delete entire database
+        rebuild alias for "stop clean delete prep start init"
 
 EOF
 exit 0
@@ -88,7 +89,6 @@ clean()
 {
 
     start_daemon
-    stop_containers
     sudo docker-compose rm
     sudo docker image prune -f
     sudo docker network prune -f
@@ -343,8 +343,8 @@ use credshed
 db.createCollection("accounts")
 sh.enableSharding("credshed")
 sh.shardCollection("credshed.accounts", {_id: 1})
-db.accounts.insert({"_id" : "moc.elpmaxe|n4bQgYhMCbZLR53W", "email" : "test", "password" : "Password1" })
-db.sources.insert({"_id" : NumberInt(1), "name" : "test", "modified_date": ISODate(), "import_finished": true, "created_date": ISODate(), "hash": "0000000000000000000000000000000000000000", "files": ["/tmp/test.txt"], "description": "test", "total_accounts": NumberInt(1), "unique_accounts": NumberInt(1), "filesize": NumberInt(26) })' | sudo tee "${mongo_script_dir}/init-main_db.js"
+db.accounts.insert({"_id" : "moc.elpmaxe|n4bQgYhMCbZLR53W", "e" : "test", "p" : "Password1" })
+db.sources.insert({"_id" : NumberInt(1), "name" : "test", "filename": "/tmp/test.txt", "modified_date": ISODate(), "import_finished": true, "created_date": ISODate(), "hash": "0000000000000000000000000000000000000000", "files": ["/tmp/test.txt"], "description": "test", "top_domains": {"example.com": 1}, "total_accounts": NumberInt(1), "unique_accounts": NumberInt(1), "filesize": NumberInt(26) })' | sudo tee "${mongo_script_dir}/init-main_db.js"
 
 
     echo '
@@ -466,12 +466,15 @@ do
             do_start=true
             ;;
         -i|-I|--init|init|3)
+            do_start=true
             do_init_db=true
             ;;
         -c|-C|--clean|clean)
+            do_stop=true
             do_clean=true
             ;;
         -d|-D|--delete|--del|delete)
+            do_stop=true
             do_delete=true
             ;;
         --stop|stop|-k|-K|--kill|kill)
@@ -487,6 +490,14 @@ do
                 *) num_shards=$1
                     ;;
             esac
+            ;;
+        --rebuild|rebuild|-r|-R)
+            do_stop=true
+            do_delete=true
+            do_clean=true
+            do_db_prep=true
+            do_start=true
+            do_init_db=true
             ;;
         -h|--help|help)
             usage
@@ -510,7 +521,6 @@ fi
 
 if [ -n "$do_delete" ]
 then
-    stop_containers
     delete_db
 fi
 
@@ -530,7 +540,6 @@ fi
 if [ -n "$do_init_db" ]
 then
     start_daemon
-    start_containers
     sleep 5
     init_database
 fi

@@ -6,8 +6,12 @@
 
 import os
 import sys
+import logging
+from .errors import *
 from . import filestore
 from pathlib import Path
+
+log = logging.getLogger('credshed.util')
 
 
 def clean_encoding(s):
@@ -83,7 +87,8 @@ def hash_file(filename):
         return filestore.filestore.index.hash(filename)
 
     # otherwise, just dew it
-    except AttributeError:
+    except (AttributeError, FilestoreHashError) as e:
+        log.debug(e)
         return filestore.util.hash_file(filename)
 
 

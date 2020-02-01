@@ -6,11 +6,14 @@
 import sys
 import logging
 import argparse
-from credshed import *
+from lib import util
+from lib import logger
 from time import sleep
+from lib.errors import *
 from pathlib import Path
+from lib.credshed import *
+from lib import validation
 from datetime import datetime
-from credshed.lib import logger
 from multiprocessing import cpu_count
 
 # set up logging
@@ -29,32 +32,57 @@ class CredShedCLI(CredShed):
             log.warning('Continuing without metadata support')
 
 
-    def search(self, query, query_type):
+    def search(self):
 
         start_time = datetime.now()
         num_accounts_in_db = self.db.account_count()
 
+        left = int(self.options.limit)
+
         num_results = 0
-        for account in super().search(query, query_type=query_type, limit=self.options.limit):
-            if self.options.print0:
-                sys.stdout.buffer.write(account.bytes + b'\n')
-            else:
-                print(str(account))
-            if self.options.verbose:
-                metadata = self.db.fetch_account_metadata(account)
-                if metadata:
-                    print(metadata)
-            num_results += 1
+        for keyword in self.options.search:
+            if self.options.limit == 0 or left > 0:
+                query_type = validation.validate_query_type(keyword, self.options.query_type)
+                log.info(f'Searching by {query_type}: {keyword}')
+                for account in super().search(keyword, limit=left):
+
+                    if self.options.print0:
+                        sys.stdout.buffer.write(account.bytes + b'\n')
+                    else:
+                        print(str(account))
+                    if self.options.verbose:
+                        metadata = self.db.fetch_account_metadata(account)
+                        if metadata:
+                            print(metadata)
+
+                    num_results += 1
+                    if self.options.limit > 0:
+                        if left <= 0:
+                            break
+                        left -= 1
 
         end_time = datetime.now()
         time_elapsed = (end_time - start_time)
         log.info(f'Searched {num_accounts_in_db:,} accounts in {str(time_elapsed)[:-4]} seconds')
-        log.info(f'{num_results:,} results for "{query}"')
+        if self.options.limit:
+            total_count = 0
+            for keyword in self.options.search:
+                total_count += self.count(keyword)
+            log.info(f'Showing {num_results:,}/{total_count:,} results')
+        else:
+            log.info(f'{num_results:,} results for "{" + ".join(self.options.search)}"')
 
 
-    def stats(self):
+    def query_stats(self):
 
-        print(super().stats())
+        for keyword in self.options.search:
+            stats = super().query_stats(keyword)
+            log.info(stats)
+
+
+    def db_stats(self):
+
+        print(super().db_stats())
 
 
     def import_files(self):
@@ -82,10 +110,13 @@ class CredShedCLI(CredShed):
                         filename,
                         unattended=self.options.unattended,
                         threads=self.options.threads,
-                        show=options.show_unique
+                        show=options.show_unique,
+                        force=options.force_injest
                     )
                     if total_accounts > 0:
                         interesting_files += 1
+                    else:
+                        log.warning(f'No accounts found in {filename}')
                     if unique_accounts > 0:
                         total_unique_accounts += unique_accounts
 
@@ -116,9 +147,10 @@ class CredShedCLI(CredShed):
         end_time = datetime.now()
         time_elapsed = (end_time - major_start_time).total_seconds()
 
-        log.info('{:,} unique accounts from {:,} files in {:02d}:{:02d}:{:02d}'.format(
+        log.info('{:,} unique accounts from {:,}/{:,} files in {:02d}:{:02d}:{:02d}'.format(
             total_unique_accounts,
             interesting_files,
+            len(filelist),
             int(time_elapsed // 3600),
             int((time_elapsed % 3600) // 60),
             int(time_elapsed % 60)
@@ -187,40 +219,22 @@ def main(options):
         log.critical('{}: {}\n'.format(e.__class__.__name__, str(e)))
         sys.exit(1)
 
-    options.query_type = options.query_type.strip().lower()
-    assert options.query_type in ['auto', 'email', 'domain', 'username'], f'Invalid query type: {options.query_type}'
-
     # if we're importing stuff
     try:
         if options.injest:
-
             credshed.import_files()
 
         elif options.delete_leak is not None:
             credshed.delete_leak()
 
-        if options.search:
-
-            keyword = options.search[0]
-
-            # auto-detect query type
-            if options.query_type == 'auto':
-                if Account.is_email(keyword):
-                    query_type = 'email'
-                    log.debug('Searching by email: "{}"'.format(keyword))
-                elif re.compile(r'^([A-Z0-9_\-\.]*)\.([A-Z]{2,8})$', re.I).match(keyword):
-                    query_type = 'domain'
-                    log.debug('Searching by domain: "{}"'.format(keyword))
-                else:
-                    raise CredShedError('Failed to auto-detect query type, please specify with --query-type')
-                    return
-                    # options.query_type = 'username'
-                    # errprint('[+] Searching by username')
-
-            credshed.search(options.search, query_type)
-
         if options.stats:
-            credshed.stats()
+            credshed.query_stats()
+
+        elif options.search:
+            credshed.search()
+
+        if options.db_stats:
+            credshed.db_stats()
 
     except CredShedError as e:
         log.error('{}: {}\n'.format(e.__class__.__name__, str(e)))
@@ -247,14 +261,16 @@ if __name__ == '__main__':
     parser.add_argument('search',                       nargs='*',                      help='search term(s)')
     parser.add_argument('-q', '--query-type',           default='auto',                 help='query type (email, domain, or username)')
     parser.add_argument('-i', '--injest',   type=Path,  nargs='+',                      help='import files or directories into the database')
-    parser.add_argument('-t', '--stats',    action='store_true',                        help='show all imported leaks and DB stats')
+    parser.add_argument('-f', '--force-injest',         action='store_true',            help='also injest files which have already been imported')
+    parser.add_argument('-db', '--db-stats', action='store_true',                       help='show all imported leaks and DB stats')
+    parser.add_argument('-t', '--stats',    action='store_true',                        help='show query statistics instead of individual accounts')
     parser.add_argument('-s', '--stdout',   action='store_true',                        help='write output to stdout instead of database (null-byte delimited, use tr \'\\0\')')
     parser.add_argument('-d', '--delete-leak',          nargs='*',                      help='delete leak(s) from database, e.g. "1-3,5,7-9"', metavar='SOURCE_ID')
     parser.add_argument('-dd', '--deduplication',       action='store_true',            help='deduplicate accounts ahead of time (lots of memory usage on large files)')
     parser.add_argument('--threads',        type=int,   default=default_threads,        help='number of threads for import operations')
     parser.add_argument('--show-unique',                action='store_true',            help='during import, print unique accounts')
     parser.add_argument('--print0',                     action='store_true',            help='delimit by null byte instead of colon')
-    parser.add_argument('--limit',                      type=int,                       help='limit number of results (default: unlimited)')
+    parser.add_argument('--limit',          type=int,   default=0,                      help='limit number of results (default: unlimited)')
     parser.add_argument('-u', '--unattended',           action='store_true',            help='auto-detect import fields without user interaction')
     parser.add_argument('-v', '--verbose',              action='store_true',            help='display all available data for each account')
     parser.add_argument('--debug',                      action='store_true',            help='display debugging info')

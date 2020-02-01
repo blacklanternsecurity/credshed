@@ -7,6 +7,7 @@ import base64
 import hashlib
 from .util import *
 from .errors import *
+from . import validation
 
 
 
@@ -43,16 +44,7 @@ class Account():
     __slots__ = ['email', 'username', 'password', 'misc']
 
     valid_email_chars = b'abcdefghijklmnopqrstuvwxyz0123456789-_.+@'
-    # for checking if string is an email
-    email_regex = re.compile(r'^([A-Z0-9_\-\.\+]+)@([A-Z0-9_\-\.]+)\.([A-Z]{2,8})$', re.I)
-    # same thing but for raw bytes
-    email_regex_bytes = re.compile(rb'^([A-Z0-9_\-\.\+]+)@([A-Z0-9_\-\.]+)\.([A-Z]{2,8})$', re.I)
-    # for searching for email in bytes
-    email_regex_search_bytes = re.compile(rb'[A-Z0-9_\-\.\+]+@[A-Z0-9_\-\.]+\.[A-Z]{2,8}', re.I)
-    # less-strict version
-    fuzzy_email_regex = re.compile(r'^(.+)@(.+)\.(.+)')
-    # same thing but for raw bytes
-    fuzzy_email_regex_bytes = re.compile(rb'^(.+)@(.+)\.(.+)')
+
 
     # max length for email, username, and password
     max_length_1 = 128
@@ -78,18 +70,18 @@ class Account():
                 self.email += c
         # remove whitespace, single-quotes, and backslashes
         self.username = username.strip().translate(None, b"'\\")
-        self.misc = misc.strip()
+        self.misc = misc.strip(b'\r\n')
 
         if not self.email:
-            if self.is_email(self.username):
+            if validation.is_email(self.username):
                 self.email = self.username.lower()
                 self.username = b''
 
-        elif not self.is_email(self.email):
-                if strict:
-                    raise AccountCreationError(f'Email validation failed on "{email}" and strict mode is enabled.')
-                elif not self.username:
-                    self.email, self.username = self.username, self.email
+        elif not validation.is_email(self.email):
+            if strict:
+                raise AccountCreationError(f'Email validation failed on "{email}" and strict mode is enabled.')
+            elif not self.username:
+                self.email, self.username = self.username, self.email
 
         if _hash and not password:
             self.password = _hash.strip()
@@ -119,6 +111,7 @@ class Account():
     @property
     def document(self, id_only=False):
         '''
+        mongo-friendly doctionary representation
         note: values must be truncated again here because they may become longer when decoded
         '''
 
@@ -128,18 +121,32 @@ class Account():
             doc['_id'] = self.to_object_id()
             if not id_only:
                 if self.email:
-                    doc['email'] = decode(self.split_email[0])
+                    doc['e'] = decode(self.split_email[0])
                 if self.username:
-                    doc['username'] = decode(self.username)
+                    doc['u'] = decode(self.username)
                 if self.password:
-                    doc['password'] = decode(self.password)
+                    doc['p'] = decode(self.password)
                 if self.misc:
-                    doc['misc'] = decode(self.misc)
+                    doc['m'] = decode(self.misc)
         except ValueError:
             raise AccountCreationError(f'[!] Error formatting {str(self.bytes)[:64]}')
 
         return doc
 
+
+    @property
+    def json(self):
+        '''
+        human-friendly dictionary representation
+        '''
+
+        return {
+            'i': str(self._id),
+            'e': decode(self.email),
+            'u': decode(self.username),
+            'p': decode(self.password),
+            'm': decode(self.misc)
+        }
 
 
     @property
@@ -162,51 +169,17 @@ class Account():
     def from_document(cls, document):
 
         try:
-            email = (document['email'] + '@' + document['_id'].split('|')[0][::-1]).encode(encoding='utf-8')
+            email = (document['e'] + '@' + document['_id'].split('|')[0][::-1]).encode(encoding='utf-8')
         except KeyError:
             email = b''
         except UnicodeEncodeError:
             email = str(email)[2:-1] + b'@' + str(domain[::-1])[2:-1]
         except (ValueError, TypeError):
             raise AccountCreationError(f'Unable to create account from document {document}')
-        username = cls._if_key_exists(document, 'username')
-        password = cls._if_key_exists(document, 'password')
-        misc = cls._if_key_exists(document, 'misc')
+        username = cls._if_key_exists(document, 'u')
+        password = cls._if_key_exists(document, 'p')
+        misc = cls._if_key_exists(document, 'm')
         return Account(email=email, username=username, password=password, misc=misc)
-
-
-    @classmethod
-    def is_email(cls, email):
-
-        # abort if value is too long
-        if len(email) > cls.max_length_1:
-            return False
-
-        try:
-            if cls.email_regex.match(email):
-                return True
-        except TypeError:
-            if cls.email_regex_bytes.match(email):
-                return True
-
-        return False
-
-
-    @classmethod
-    def is_fuzzy_email(cls, email):
-
-        if len(email) > 128:
-            return False
-
-        try:
-            if cls.fuzzy_email_regex.match(email):
-                return True
-        except TypeError:
-            if cls.fuzzy_email_regex_bytes.match(email):
-                return True
-
-        return False
-
 
 
     @staticmethod

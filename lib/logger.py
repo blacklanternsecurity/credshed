@@ -12,7 +12,7 @@ from pathlib import Path
 class ColoredFormatter(logging.Formatter):
 
     color_mapping = {
-        'DEBUG':    15, # white
+        'DEBUG':    69, # blue
         'INFO':     118, # green
         'WARNING':  208, # orange
         'ERROR':    196, # red
@@ -64,7 +64,9 @@ log_format='%(asctime)s\t%(levelname)s\t%(name)s\t%(message)s'
 log_filename = str(Path('/var/log/credshed') / filename)
 
 try:
-    logging.basicConfig(level=logging.INFO, filename=log_filename, format=log_format)
+    logging.basicConfig(filename=log_filename, format=log_format)
 except (PermissionError, FileNotFoundError):
     log.warning(f'Unable to create log file at {log_filename}, logging to current directory')
-    logging.basicConfig(level=logging.INFO, filename=filename, format=log_format)
+    logging.basicConfig(filename=filename, format=log_format)
+
+logging.getLogger('credshed').setLevel(logging.DEBUG)

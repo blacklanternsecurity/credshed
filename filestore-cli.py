@@ -5,10 +5,10 @@
 import sys
 import logging
 import argparse
+from lib import logger
+from lib.errors import *
 from pathlib import Path
-from credshed.lib import logger
-from credshed.lib.errors import *
-from credshed.lib.filestore import *
+from lib.filestore import *
 
 
 # set up logging

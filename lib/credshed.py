@@ -13,20 +13,7 @@ from .injestor import Injestor
 
 
 # set up logging
-log_format='%(asctime)s\t%(levelname)s\t%(name)s\t%(message)s'
 log = logging.getLogger('credshed')
-log.setLevel(logging.DEBUG)
-
-
-
-def set_log_file(filename='credshed.log'):
-
-    try:
-        log_filename = str(Path('/var/log/credshed') / filename)
-        logging.basicConfig(level=log_level, filename=log_filename, format=log_format)
-    except (PermissionError, FileNotFoundError):
-        log.warning(f'Unable to create log file at {log_file}, logging to current directory')
-        logging.basicConfig(level=log_level, filename='credshed.log', format=log_format)
 
 
 
@@ -52,45 +39,41 @@ class CredShed():
 
 
 
-    def search(self, query, query_type='email', limit=None):
+    def search(self, query, query_type='email', limit=0):
         '''
         query = search string(s)
         yields Account objects
         '''
 
-        if type(query) == str:
-            query = [query]
-
-        if limit is None:
-            left = 0
-        else:
-            log.info(f'Limiting to {limit:,} results')
-            left = int(limit)
-
-        for query in query:
-
-            if limit and left <= 0:
-                break
-
-            try:
-                for account in self.db.search(str(query), query_type=query_type, max_results=left):
-                    #print('{}:{}@{}:{}:{}'.format(result['username'], result['email'], result['domain'], result['password'], result['misc']))
-                    if limit:
-                        if left <= 0:
-                            break
-                        left -= 1
-
-                    yield account
-
-            except pymongo.errors.OperationFailure as e:
-                raise CredShedError('Error querying MongoDB: {}'.format(str(e)))
+        for account in self.db.search(str(query), query_type=query_type, limit=limit):
+            #print('{}:{}@{}:{}:{}'.format(result['username'], result['email'], result['domain'], result['password'], result['misc']))
+            yield account
 
 
 
-    def stats(self):
+    def count(self, query, query_type='email'):
+
+        return self.db.count(query, query_type)
+
+
+
+    def db_stats(self):
 
         return self.db.stats(accounts=True, sources=True, db=True)
 
+
+    def query_stats(self, query, query_type='domain', limit=10):
+
+        # go get the raw data (source_id: num_accounts)
+        stats = self.db.query_stats(query, query_type)
+        stats = sorted(stats.items(), key=lambda x: x[1], reverse=True)[:limit]
+
+        return stats
+
+
+    def get_source(self, source_id):
+
+        return self.db.get_source(source_id)
 
 
     def delete_source(self, source_id):
@@ -99,7 +82,7 @@ class CredShed():
 
 
 
-    def import_file(self, filename, strict=False, unattended=True, threads=2, show=False):
+    def import_file(self, filename, strict=False, unattended=True, threads=2, show=False, force=False):
         '''
         Takes a filename as input
         Returns a two-tuple: (unique_accounts, total_accounts)
@@ -125,7 +108,7 @@ class CredShed():
 
             try:
                 injestor = Injestor(source, threads=threads)
-                for unique_account in injestor.start():
+                for unique_account in injestor.start(force=force):
                     source.unique_accounts += 1
                     if show:
                         print(unique_account)

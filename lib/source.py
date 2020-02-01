@@ -4,6 +4,7 @@
 
 from .errors import *
 from .parser import *
+from .util import decode
 from pathlib import Path
 from .config import config
 from datetime import datetime
@@ -27,6 +28,9 @@ class Source():
             print(account)
     '''
 
+    # fields which are allowed in the JSON document
+    doc_fields = ['hash', 'name', 'filename', 'files', 'filesize', 'description', 'top_domains', 'created_date', 'modified_date', 'total_accounts', 'unique_accounts', 'import_finished']
+
 
     @classmethod
     def from_doc(cls, doc):
@@ -35,20 +39,24 @@ class Source():
         '''
 
         try:
-            c = cls(doc.pop('files')[0], filesize=doc.pop('filesize'))
+            c = cls(doc.pop('filename'), name=doc.pop('name'), filesize=doc.pop('filesize'))
             c.update(doc)
             return c
         except (KeyError, IndexError) as e:
             raise CredShedSourceError(f'Failed to create Source object from db: {e}')
 
 
-    def __init__(self, filename, filesize=None, deduplicate=False):
+    def __init__(self, filename, name=None, filesize=None, deduplicate=False):
 
         # Not set unless retrieved from DB
         self.id = None
 
         # filename from which accounts are extracted
         self.filename = Path(filename).resolve()
+        if name is None:
+            self.name = str(self.filename)
+        else:
+            self.name = name
         # filesize in bytes
         if filesize is None:
             try:
@@ -68,6 +76,19 @@ class Source():
         self.description = ''
         # SHA1 hash of file
         self._hash = None
+        # top domains
+        self.domains = {}
+
+
+    def to_doc(self):
+
+        doc = dict()
+        for field in self.doc_fields:
+            if field in self.__dict__:
+                doc.update({field: self.__dict__[field]})
+        doc['id'] = self.id
+
+        return doc
 
 
 
@@ -101,13 +122,26 @@ class Source():
 
     def update(self, d):
 
-        allowed_fields = ['name', 'hash', 'description', 'created_date', 'modified_date', 'total_accounts', 'unique_accounts']
-
         self.id = d.pop('_id')
         for k,v in d.items():
-            if k in allowed_fields:
+            if k in self.doc_fields:
                 self.__dict__.update({k:v})
 
+
+    def increment_domain(self, account):
+
+        _, domain = account.split_email
+        if domain:
+            domain = decode(domain)
+            try:
+                self.domains[domain] += 1
+            except KeyError:
+                self.domains[domain] = 1
+
+
+    def top_domains(self, limit=10):
+
+        return dict(sorted(self.domains.items(), key=lambda x: x[1], reverse=True)[:limit])
 
 
     def __iter__(self):
@@ -118,7 +152,13 @@ class Source():
 
     def __str__(self):
 
-        return f'{self.filename} (unique accounts: {len(self):,})'
+        try:
+            store_dir = config['FILESTORE']['store_dir']
+            filename = self.filename.relative_to(store_dir)
+        except (KeyError, ValueError):
+            filename = self.filename
+
+        return f'{filename} (total accounts: {len(self):,})'
 
 
     def __len__(self):
@@ -127,4 +167,4 @@ class Source():
         if length > 0:
             return length
         else:
-            return self.unique_accounts
+            return self.total_accounts

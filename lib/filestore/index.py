@@ -238,7 +238,7 @@ class FilestoreIndex(MutableMapping):
             try:
                 yield str(p.relative_to(self.dir))
             except ValueError as e:
-                log.error(e)
+                log.debug(e)
 
 
     def hash(self, filename):
@@ -247,7 +247,9 @@ class FilestoreIndex(MutableMapping):
 
         resolved_filename = Path(filename).resolve()
         if not resolved_filename.is_file():
-            raise FilestoreHashError(f'{filename} is not a normal file')
+            raise FilestoreHashError(f'Failed to hash {filename}: is not a normal file')
+        if not str(resolved_filename).startswith(str(self.dir)):
+            raise FilestoreHashError(f'Failed to hash {filename}: is outside {self.dir}')
 
         # read the index if it hasn't been already
         if not self.hash_index and not self.index_read:

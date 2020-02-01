@@ -2,21 +2,17 @@
 
 # by TheTechromancer
 
-import copy
-import queue
 import hashlib
 import logging
 import pymongo
-import itertools
-import traceback
 from .util import *
 from .errors import *
 from .source import *
 from .account import *
 from time import sleep
-from pathlib import Path
+from . import validation
 from .config import config
-from datetime import datetime, timedelta
+from datetime import datetime
 
 
 # set up logging
@@ -48,8 +44,8 @@ class DB():
         if not (self.main_client or self.meta_client):
             raise CredShedDatabaseError('Failed to contact both main and metadata databases')
 
-        #self.accounts.create_index([('username', pymongo.ASCENDING)], sparse=True, background=True)
-        #self.accounts.create_index([('email', pymongo.ASCENDING)], sparse=True, background=True)
+        #self.accounts.create_index([('u', pymongo.ASCENDING)], sparse=True, background=True)
+        #self.accounts.create_index([('e', pymongo.ASCENDING)], sparse=True, background=True)
 
         # sources
         self.sources = self.main_db.sources
@@ -69,108 +65,123 @@ class DB():
 
 
 
-    def search(self, keywords, query_type='email', max_results=10000):
+    def search(self, keyword, query_type='email', limit=10000):
         '''
         searches by keyword using regex
         ~ 2 minutes to regex-search non-indexed 100M-entry DB
         '''
 
-        query_type = str(query_type).strip().lower()
+        try:
 
-        if type(keywords) == str:
-            keywords = [keywords,]
+            query = self._build_query(keyword, query_type)
 
-        results = dict()
-
-        for keyword in keywords:
-            '''
-            
-            main_keyword = '^{}'.format(keyword)
-            domain_keyword = '^{}'.format(keyword[::-1].lower())
-            if password:
-                results['passwords'] = self.accounts.find({'password': {'$regex': main_keyword, '$options': 'i'}})
-            elif misc:
-                results['descriptions'] = self.accounts.find({'misc': {'$regex': main_keyword}})
-            elif Account.is_email(keyword):
-                # email, domain = keyword.lower().split('@')[:2]
-                # #results['emails'] = self.accounts.find({'$and': [{'email': email}, {'domain': {'$regex': domain_keyword}}]})
-                # domain_keyword = base64.b64encode(sha1(b'.'.join(keyword.lower().encode().split(b'.')[-2:])).digest()).decode()[:6]
-                # domain_regex = r'^{}.*'.format(domain_keyword).replace('+', r'\+')
-                # results['emails'] = self.accounts.find({'$and': [{'email': email}, {'_id': {'$regex': domain_regex}}]}):
-
-            else:
-                #results['usernames'] = self.accounts.find({'username': {'$regex': main_keyword}}, collation=Collation(locale='en', strength=2))
-                results['usernames'] = self.accounts.find({'username': {'$regex': main_keyword, '$options': 'i'}})
-                results['emails'] = self.accounts.find({'$or': [{'email': {'$regex': main_keyword.lower()}}, {'domain': {'$regex': domain_keyword}}]})
-                #print(self.accounts.find({'email': {'$regex': main_keyword}}).hint([('email', 1)]).explain())
-                #results['emails'] = self.accounts.find({'email': {'$regex': main_keyword}})
-            '''
-
-            if query_type == 'email':
+            for result in self.accounts.find(query).limit(limit):
                 try:
-                    # _id begins with reversed domain
-                    email, domain = keyword.lower().split('@')[:2]
-                    domain_chunk = re.escape(domain[::-1])
-                    email_hash = decode(base64.b64encode(hashlib.sha256(encode(email)).digest()[:6]))
-                    query_str = domain_chunk + '\\|' +  email_hash
+                    account = Account.from_document(result)
+                    yield account
+                except AccountCreationError as e:
+                    log.warning(str(e))
 
-                    query_regex = rf'^{query_str}.*'
-                    query = {'_id': {'$regex': query_regex}}
-                    log.info(f'Raw mongo query: {query}')
-                    results['emails'] = self.accounts.find(query).limit(max_results)
-                    #results['emails'] = self.accounts.find({'email': email, '_id': {'$regex': domain_regex}})
-                    #results['emails'] = self.accounts.find({'email': email})
-
-                except ValueError:
-                    raise CredShedError('Invalid email')
-                    # assume email without domain
-                    '''
-                    email = r'^{}$'.format(keyword.lower())
-                    query = {'email': {'$regex': email}}
-                    log.info(query)
-                    results['emails'] = self.accounts.find(query).limit(max_results)
-                    '''
+        except pymongo.errors.PyMongoError as e:
+            raise CredShedDatabaseError(error_detail(e))
 
 
-            elif query_type == 'domain':
-                domain = keyword.lower()
-                domain = re.escape(domain[::-1])
 
-                if domain.endswith('.'):
-                    # if query is like ".com"
-                    query_regex = rf'^{domain}[\w.]*\|'
-                else:
-                    # or if query is like "example.com"
-                    query_regex = rf'^{domain}[\.\|]'
 
-                num_sections = len(domain.split('.'))
-                query = {'_id': {'$regex': query_regex}}
-                log.info(f'Raw mongo query: {query}')
-                results['emails'] = self.accounts.find(query).limit(max_results)
+    def count(self, keyword, query_type='email'):
 
-            elif query_type == 'username':
-                query_regex = rf'^{re.escape(keyword)}$'
-                query = {'username': {'$regex': query_regex}}
-                log.info(f'Raw mongo query: {query}')
-                results['usernames'] = self.accounts.find(query).limit(max_results)
+        try:
 
-            else:
-                raise CredShedError(f'Invalid query type: {query_type}')
+            query = self._build_query(keyword, query_type)
+            return self.accounts.count_documents(query)
 
-            for category in results:
-                for result in results[category]:
+        except pymongo.errors.PyMongoError as e:
+            raise CredShedDatabaseError(error_detail(e))
+
+
+
+    def query_stats(self, keyword, query_type='domain'):
+
+        if self.meta_client:
+
+            try:
+
+                # {source_id: num_accounts}
+                sources = dict()
+
+                query = self._build_query(keyword, query_type)
+                for result in self.accounts_metadata.find(query, {'s': True, '_id': False}):
+
                     try:
-                        account = Account.from_document(result)
-                        yield account
-                    except AccountCreationError as e:
-                        log.warning(str(e))
+                        for source_id in result['s']:
+                            try:
+                                sources[source_id] += 1
+                            except KeyError:
+                                sources[source_id] = 1
+
+                    except KeyError:
+                        log.error('"s" key missing from account metadata')
+
+                return sources
+
+            except pymongo.errors.PyMongoError as e:
+                raise CredShedDatabaseError(error_detail(e))
+
+        else:
+            raise CredShedMetadataError('No metadata available, check database config')
+
+
+
+
+    def _build_query(self, keyword, query_type='email'):
+
+
+        query_type = validation.validate_query_type(keyword, query_type)
+
+        if query_type == 'email':
+            try:
+                email, domain = keyword.lower().split('@')[:2]
+                # _id begins with reversed domain
+                domain_chunk = re.escape(domain[::-1])
+                email_hash = decode(base64.b64encode(hashlib.sha256(encode(email)).digest()[:6]))
+                query_str = domain_chunk + '\\|' +  re.escape(email_hash)
+
+                query_regex = rf'^{query_str}.*'
+                query = {'_id': {'$regex': query_regex}}
+
+            except ValueError:
+                raise CredShedError('Invalid email')
+
+        elif query_type == 'domain':
+            domain = keyword.lower()
+            domain = re.escape(domain[::-1])
+
+            if domain.endswith('.'):
+                # if query is like ".com"
+                query_regex = rf'^{domain}[\w.]*\|'
+            else:
+                # or if query is like "example.com"
+                query_regex = rf'^{domain}[\.\|]'
+
+            num_sections = len(domain.split('.'))
+            query = {'_id': {'$regex': query_regex}}
+
+        elif query_type == 'username':
+            query_regex = rf'^{re.escape(keyword)}$'
+            query = {'u': {'$regex': query_regex}}
+
+        else:
+            raise CredShedError(f'Invalid query type: {query_type}')
+
+        log.debug(f'Raw mongo query: {query}')
+        return query
             
 
 
     def fetch_account_metadata(self, account):
 
         if not self.meta_client:
-            raise CredShedMetadataError('No metadata available')
+            raise CredShedMetadataError('No metadata available, check database config')
 
         sources = []
 
@@ -263,8 +274,11 @@ class DB():
             - Again after a source is imported to update file list and unique account counters
         '''
 
-        # see if it already exists - try to find by hash
-        source_in_db = self.sources.find_one({'hash': source.hash})
+        try:
+            # see if it already exists - try to find by hash
+            source_in_db = self.sources.find_one({'hash': source.hash})
+        except pymongo.errors.PyMongoError as e:
+            raise CredShedDatabaseError(error_detail(e))
 
         # if it doesn't exist, create it
         if source_in_db is None:
@@ -273,10 +287,12 @@ class DB():
 
             source_doc = {
                 'name': str(source.filename),
+                'filename': str(source.filename),
                 'hash': source.hash,
                 'files': [str(source.filename)],
                 'filesize': source.filesize,
                 'description': source.description,
+                'top_domains': source.top_domains(100),
                 'created_date': datetime.now(),
                 'modified_date': datetime.now(),
                 'total_accounts': (source.total_accounts if import_finished else 0),
@@ -311,8 +327,9 @@ class DB():
                     },
                     '$set': {
                         'modified_date': datetime.now(),
+                        'top_domains': source.top_domains(100),
                         'total_accounts': source.total_accounts,
-                        'import_finished': True
+                        'import_finished': (True if import_finished else False)
                     },
                     '$inc': {
                         'unique_accounts': source.unique_accounts
@@ -437,11 +454,14 @@ class DB():
 
 
 
-    def get_source(self, _id):
+    def get_source(self, source_id):
 
         try:
-            doc = self.sources.find_one({'_id': int(_id)})
-            return Source.from_doc(doc)
+            doc = self.sources.find_one({'_id': int(source_id)})
+            if doc:
+                return Source.from_doc(doc)
+            else:
+                raise CredShedError(f'No source found with ID "{source_id}"')
 
         except pymongo.errors.PyMongoError as e:
             raise CredShedDatabaseError(error_detail(e))
