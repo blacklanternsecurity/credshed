@@ -295,9 +295,9 @@ class DB():
                 'top_domains': source.top_domains(100),
                 'created_date': datetime.now(),
                 'modified_date': datetime.now(),
-                'total_accounts': (source.total_accounts if import_finished else 0),
-                'unique_accounts': (source.unique_accounts if import_finished else 0),
-                'import_finished': (True if import_finished else False)
+                'total_accounts': source.total_accounts,
+                'unique_accounts': source.unique_accounts,
+                'import_finished': import_finished
             }
 
             while 1:
@@ -320,24 +320,33 @@ class DB():
         else:
             # log.info(f'Matching hash for {self.filename} found')
 
+            self.sources.update_one({'hash': source.hash}, {
+                '$addToSet': {
+                    'files': str(source.filename)
+                },
+                '$set': {
+                    'modified_date': datetime.now(),
+                    'import_finished': import_finished
+                },
+                '$max': {
+                    'total_accounts': source.total_accounts,
+                },
+                '$inc': {
+                    'unique_accounts': source.unique_accounts
+                }
+
+            })
+
+            # only update the top domains if import finished successfully
+            # this prevents messing up existing data when cancelling an import operation
             if import_finished:
                 self.sources.update_one({'hash': source.hash}, {
-                    '$addToSet': {
-                        'files': str(source.filename)
-                    },
                     '$set': {
-                        'modified_date': datetime.now(),
-                        'top_domains': source.top_domains(100),
-                        'total_accounts': source.total_accounts,
-                        'import_finished': (True if import_finished else False)
-                    },
-                    '$inc': {
-                        'unique_accounts': source.unique_accounts
+                        'top_domains': source.top_domains(100)
                     }
-
                 })
 
-            # refresh data                
+            # refresh data   
             source_in_db = self.sources.find_one({'_id': source_in_db['_id']})
             return source_in_db
 

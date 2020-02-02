@@ -53,7 +53,7 @@ class ColoredFormatter(logging.Formatter):
 console = logging.StreamHandler()
 # tell the handler to use this format
 console.setFormatter(ColoredFormatter('%(levelname)s %(message)s'))
-logging.getLogger('credshed').addHandler(console)
+logging.getLogger('credshed').handlers = [console]
 
 
 ### LOG TO FILE ###

@@ -228,6 +228,8 @@ def main(options):
             credshed.delete_leak()
 
         if options.stats:
+            if not options.search:
+                raise AssertionError('Please specify search query')
             credshed.query_stats()
 
         elif options.search:
@@ -281,29 +283,24 @@ if __name__ == '__main__':
             parser.print_help()
             sys.exit(0)
 
+        logging.getLogger('credshed').setLevel(logging.INFO)
+
         options = parser.parse_args()
 
         if options.debug:
             logging.getLogger('credshed').setLevel(logging.DEBUG)
             options.verbose = True
-        else:
-            logging.getLogger('credshed').setLevel(logging.INFO)
 
         main(options)
 
     except AssertionError as e:
-        errprint(f'\n\n[!] {e}\n')
+        log.critical(e)
         sys.exit(2)
 
     except argparse.ArgumentError as e:
-        errprint(f'\n\n[!] {e}\n[!] Check your syntax')
+        log.error(e)
+        log.error('Check your syntax')
         sys.exit(2)
 
     except (KeyboardInterrupt, BrokenPipeError):
-        errprint('\n\n[!] Interrupted')
-
-    finally:
-        try:
-            outfile.close()
-        except:
-            pass
+        log.critical('Interrupted')

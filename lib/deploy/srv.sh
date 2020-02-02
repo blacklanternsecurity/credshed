@@ -19,7 +19,7 @@ Usage: ${0##*/} [option]
         stop    stop containers
         clean   remove artifacts such as docker containers & images
         delete  delete entire database
-        rebuild alias for "stop clean delete prep start init"
+        rebuild alias for "stop delete prep start init"
 
 EOF
 exit 0
@@ -135,7 +135,7 @@ create_dirs_and_yaml()
 
     echo "version: '3'
 
-services:" | tee -a docker-compose.yml
+services:" | tee -a docker-compose.yml | fgrep -v MONGO_INITDB_ROOT
 
     # create YAML for primary router
     echo "
@@ -494,7 +494,6 @@ do
         --rebuild|rebuild|-r|-R)
             do_stop=true
             do_delete=true
-            do_clean=true
             do_db_prep=true
             do_start=true
             do_init_db=true
