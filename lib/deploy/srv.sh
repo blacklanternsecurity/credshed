@@ -343,7 +343,7 @@ use credshed
 db.createCollection("accounts")
 sh.enableSharding("credshed")
 sh.shardCollection("credshed.accounts", {_id: 1})
-db.accounts.insert({"_id" : "moc.elpmaxe|n4bQgYhMCbZLR53W", "e" : "test", "u": "test", "p" : "Password1", "h": "2ac9cb7dc02b3c0083eb70898e549b63", "m": "Test account (added automatically)"})
+db.accounts.insert({"_id" : "moc.elpmaxe|n4bQgYhMB98TxttN", "e" : "test", "u": "test", "p" : "Password1", "h": "2ac9cb7dc02b3c0083eb70898e549b63", "m": "Test account (added automatically)"})
 db.sources.insert({"_id" : NumberInt(1), "name" : "test", "filename": "/tmp/test.txt", "modified_date": ISODate(), "import_finished": true, "created_date": ISODate(), "hash": "0000000000000000000000000000000000000000", "files": ["/tmp/test.txt"], "description": "test", "top_domains": {"example.com": NumberInt(1)}, "top_words": {"password": NumberInt(1)}, "total_accounts": NumberInt(1), "unique_accounts": NumberInt(1), "filesize": NumberInt(26) })' | sudo tee "${mongo_script_dir}/init-main_db.js"
 
 
