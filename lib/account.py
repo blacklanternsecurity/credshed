@@ -94,6 +94,10 @@ class Account():
             if validation.is_hash(self.password):
                 self.password, self.hash = b'', self.password
 
+        # if the password is super long, put it in misc
+        if not self.misc and len(self.password) >= 100:
+            self.password, self.misc = b'', self.password
+
         # keeping an email by itself is sometimes useful
         # if not strictly for OSINT purposes, at least knowing which leaks it was a part of
         # allows searching for additional information in the raw dump
