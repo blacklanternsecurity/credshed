@@ -78,6 +78,7 @@ class DB():
             for result in self.accounts.find(query).limit(limit):
                 try:
                     account = Account.from_document(result)
+                    log.critical(account._id)
                     yield account
                 except AccountCreationError as e:
                     log.warning(str(e))

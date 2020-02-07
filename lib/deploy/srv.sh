@@ -352,7 +352,7 @@ use credshed
 db.createCollection("account_metadata")
 sh.enableSharding("credshed")
 sh.shardCollection("credshed.account_metadata", {_id: 1})
-db.accounts_metadata.insert({"_id" : "moc.elpmaxe|n4bQgYhMCbZLR53W", "s": [NumberInt(1)] })' | sudo tee "${mongo_script_dir}/init-meta_db.js"
+db.accounts_metadata.insert({"_id" : "moc.elpmaxe|n4bQgYhMB98TxttN", "s": [NumberInt(1)] })' | sudo tee "${mongo_script_dir}/init-meta_db.js"
 
 }
 
