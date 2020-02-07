@@ -293,6 +293,7 @@ class DB():
                 'filesize': source.filesize,
                 'description': source.description,
                 'top_domains': source.top_domains(100),
+                'top_words': source.top_words(100),
                 'created_date': datetime.now(),
                 'modified_date': datetime.now(),
                 'total_accounts': source.total_accounts,
@@ -342,7 +343,8 @@ class DB():
             if import_finished:
                 self.sources.update_one({'hash': source.hash}, {
                     '$set': {
-                        'top_domains': source.top_domains(100)
+                        'top_domains': source.top_domains(100),
+                        'top_words': source.top_words(100)
                     }
                 })
 

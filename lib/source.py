@@ -8,6 +8,7 @@ from .util import decode
 from pathlib import Path
 from .config import config
 from datetime import datetime
+from .validation import word_regex
 
 
 # set up logging
@@ -29,7 +30,7 @@ class Source():
     '''
 
     # fields which are allowed in the JSON document
-    doc_fields = ['hash', 'name', 'filename', 'files', 'filesize', 'description', 'top_domains', 'created_date', 'modified_date', 'total_accounts', 'unique_accounts', 'import_finished']
+    doc_fields = ['hash', 'name', 'filename', 'files', 'filesize', 'description', 'top_domains', 'top_words', 'created_date', 'modified_date', 'total_accounts', 'unique_accounts', 'import_finished']
 
 
     @classmethod
@@ -78,6 +79,8 @@ class Source():
         self._hash = None
         # top domains
         self.domains = {}
+        # top password base words
+        self.words = {}
 
 
     def to_doc(self):
@@ -128,20 +131,36 @@ class Source():
                 self.__dict__.update({k:v})
 
 
-    def increment_domain(self, account):
+    def increment(self, account):
 
         _, domain = account.split_email
         if domain:
-            domain = decode(domain)
             try:
                 self.domains[domain] += 1
             except KeyError:
                 self.domains[domain] = 1
 
+        if account.password:
+            for word in word_regex.findall(account.password):
+                word = word.lower()
+                try:
+                    self.words[word] += 1
+                except KeyError:
+                    self.words[word] = 1
+
+        self.total_accounts += 1
+
 
     def top_domains(self, limit=10):
 
-        return dict(sorted(self.domains.items(), key=lambda x: x[1], reverse=True)[:limit])
+        sorted_domains = dict(sorted(self.domains.items(), key=lambda x: x[1], reverse=True)[:limit])
+        return {decode(d): c for d,c in sorted_domains.items()}
+
+
+    def top_words(self, limit=10):
+
+        sorted_words = dict(sorted(self.words.items(), key=lambda x: x[1], reverse=True)[:limit])
+        return {decode(w): c for w,c in sorted_words.items()}
 
 
     def __iter__(self):

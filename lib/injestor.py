@@ -100,6 +100,9 @@ class Injestor():
                 except KeyboardInterrupt:
                     log.warning('Stopping import')
 
+                except Exception as e:
+                    log.critical(e)
+
                 finally:
                     log.info('Waiting for threads to finish')
                     # wait until all threads are stopped:
@@ -181,9 +184,8 @@ class Injestor():
         batch = []
         for account in self.source:
             self.total_accounts += 1
-            self.source.increment_domain(account)
+            self.source.increment(account)
             batch.append(account)
-            self.source.total_accounts += 1
 
             if batch and ((self.source.total_accounts) % batch_size == 0):
                 yield batch

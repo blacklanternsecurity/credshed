@@ -243,7 +243,7 @@ def main(options):
 
     except KeyboardInterrupt:
         credshed.STOP = True
-        errprint('\n[!] Stopping CLI, please wait for threads to finish\n')
+        log.warning('Stopping CLI, please wait for threads to finish')
         return
 
     finally:
