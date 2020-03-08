@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-
 # by TheTechromancer
 
 import random
@@ -10,9 +8,7 @@ from time import sleep
 from ..account import *
 from pathlib import Path
 from .. import validation
-from datetime import datetime
 from statistics import mode, StatisticsError
-from ..validation import email_regex_search_bytes
 
 
 # set up logging
@@ -47,7 +43,7 @@ class TextParse():
         # try and run the detection algorithm to see what's in each column
         self.columns_mapped = False
 
-        # email:username:password:misc
+        # email:username:password:hash:misc
         self.fields = {
             'e': 0, # email
             'u': 1, # username
@@ -252,7 +248,7 @@ class TextParse():
                             positions_taken.add(position)
 
             if self.unattended:
-                self._adaptive_print(f'Unattended parsing of {self.filename} was successful')
+                log.info(f'Unattended parsing of {self.filename} was successful')
                 self.columns_mapped = True
             else:
                 if not input('\nOK? [Y/n] ').lower().startswith('n'):
@@ -317,8 +313,9 @@ class TextParse():
 
     def absorb_line(self, line):
         '''
-        sloppy function which takes a line and looks for email addresses
+        takes a line and looks for email addresses and hashes
         each email is extracted along with the surrounding text, which is placed into the "misc" field
+        the misc section is then searched for a hash
         yields Account() objects
         '''
 
@@ -334,7 +331,7 @@ class TextParse():
             #log.debug(str(e))
 
             # find every matching email in the line
-            matches = [(0,0)] + [m.span() for m in email_regex_search_bytes.finditer(line)] + [(len(line),0)]
+            matches = [(0,0)] + [m.span() for m in validation.email_regex_search_bytes.finditer(line)] + [(len(line),0)]
 
             # for each match
             for i in range(1, len(matches)-1):
@@ -352,12 +349,24 @@ class TextParse():
                 right_side = line[endpos:context_end][:250]
 
                 if len(left_side) > 1 or len(right_side) > 1:
-                    yield Account(email=email, misc=left_side + b'@' + right_side)
+
+                    misc = misc=left_side + b'@' + right_side
+
+                    # look for a hash
+                    _hash = validation.hash_regex.findall(misc)
+                    # strip out the hash if there is one
+                    if _hash:
+                        _hash = _hash[0]
+                        misc = misc.replace(_hash, b'#')
+                        if len(misc) <= 2:
+                            misc = b''
+                    else:
+                        _hash = b''
+
+                    yield Account(email=email, _hash=_hash, misc=misc)
+
                 else:
                     yield Account(email=email)
-
-        # if we got here, this line doesn't deserve to live
-        raise LineAbsorptionError(f'Unable to parse line: {str(line)[:80]}')
 
 
 
@@ -530,18 +539,6 @@ class TextParse():
             columns[i] = column
 
         return (columns, unknown_fields)
-
-
-
-    def _adaptive_print(self, *s, end='\n'):
-        '''
-        prints if self.unattended is False
-        '''
-        s = [str(_) for _ in s]
-        if self.unattended:
-            log.debug(' '.join(s))
-        else:
-            sys.stderr.write(' '.join(s) + end)
 
 
 

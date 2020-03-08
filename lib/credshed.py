@@ -22,7 +22,7 @@ class CredShed():
     Main class for interacting with credshed
     Contains useful methods such as:
         .search()
-        .import()
+        .import_file()
         ...
     '''
 
@@ -66,6 +66,7 @@ class CredShed():
 
         # go get the raw data (source_id: num_accounts)
         stats = self.db.query_stats(query, query_type)
+        # sort and truncate it
         stats = sorted(stats.items(), key=lambda x: x[1], reverse=True)[:limit]
 
         return stats
@@ -88,6 +89,8 @@ class CredShed():
         Returns a two-tuple: (unique_accounts, total_accounts)
 
         show = whether or not to print unique accounts
+
+        Source(filename) --> Source.parse() --> Injestor(source)
         '''
 
         source = Source(filename)
@@ -110,7 +113,7 @@ class CredShed():
                 injestor = Injestor(source, threads=threads)
                 for unique_account in injestor.start(force=force):
                     source.unique_accounts += 1
-                    if show:
+                    if show and not self.stdout:
                         print(unique_account)
 
 

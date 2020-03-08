@@ -34,6 +34,9 @@ class AccountCreationError(CredShedError):
 class LineAbsorptionError(AccountCreationError):
     pass
 
+class CredShedEmailError(CredShedError):
+    pass
+
 # Injestor-specific
 
 class InjestorError(CredShedError):

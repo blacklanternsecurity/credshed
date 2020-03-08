@@ -30,7 +30,22 @@ class Source():
     '''
 
     # fields which are allowed in the JSON document
-    doc_fields = ['hash', 'name', 'filename', 'files', 'filesize', 'description', 'top_domains', 'top_words', 'created_date', 'modified_date', 'total_accounts', 'unique_accounts', 'import_finished']
+    doc_fields = [
+        'hash',
+        'name',
+        'filename',
+        'files',
+        'filesize',
+        'description',
+        'top_domains',
+        'top_password_basewords',
+        'top_misc_basewords',
+        'created_date',
+        'modified_date',
+        'total_accounts',
+        'unique_accounts',
+        'import_finished'
+    ]
 
 
     @classmethod
@@ -79,8 +94,10 @@ class Source():
         self._hash = None
         # top domains
         self.domains = {}
-        # top password base words
-        self.words = {}
+        # top base words from passwords
+        self.password_basewords = {}
+        # top base words from misc/description field
+        self.misc_basewords = {}
 
 
     def to_doc(self):
@@ -144,9 +161,17 @@ class Source():
             for word in word_regex.findall(account.password):
                 word = word.lower()
                 try:
-                    self.words[word] += 1
+                    self.password_basewords[word] += 1
                 except KeyError:
-                    self.words[word] = 1
+                    self.password_basewords[word] = 1
+
+        if account.misc:
+            for word in word_regex.findall(account.misc):
+                word = word.lower()
+                try:
+                    self.misc_basewords[word] += 1
+                except KeyError:
+                    self.misc_basewords[word] = 1
 
         self.total_accounts += 1
 
@@ -157,9 +182,15 @@ class Source():
         return {decode(d): c for d,c in sorted_domains.items()}
 
 
-    def top_words(self, limit=10):
+    def top_password_basewords(self, limit=10):
 
-        sorted_words = dict(sorted(self.words.items(), key=lambda x: x[1], reverse=True)[:limit])
+        sorted_words = dict(sorted(self.password_basewords.items(), key=lambda x: x[1], reverse=True)[:limit])
+        return {decode(w): c for w,c in sorted_words.items()}
+
+
+    def top_misc_basewords(self, limit=10):
+
+        sorted_words = dict(sorted(self.misc_basewords.items(), key=lambda x: x[1], reverse=True)[:limit])
         return {decode(w): c for w,c in sorted_words.items()}
 
 

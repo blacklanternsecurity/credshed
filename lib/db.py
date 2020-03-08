@@ -293,7 +293,8 @@ class DB():
                 'filesize': source.filesize,
                 'description': source.description,
                 'top_domains': source.top_domains(100),
-                'top_words': source.top_words(100),
+                'top_misc_basewords': source.top_misc_basewords(100),
+                'top_password_basewords': source.top_password_basewords(100),
                 'created_date': datetime.now(),
                 'modified_date': datetime.now(),
                 'total_accounts': source.total_accounts,
@@ -344,7 +345,8 @@ class DB():
                 self.sources.update_one({'hash': source.hash}, {
                     '$set': {
                         'top_domains': source.top_domains(100),
-                        'top_words': source.top_words(100)
+                        'top_misc_basewords': source.top_misc_basewords(100),
+                        'top_password_basewords': source.top_password_basewords(100),
                     }
                 })
 

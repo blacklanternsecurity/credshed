@@ -49,7 +49,7 @@ class Account():
     # max length for email, username, and password
     max_length_1 = 128
     # max length for hash, misc
-    max_length_2 = 256
+    max_length_2 = 1000
 
     def __init__(self, email=b'', username=b'', password=b'', _hash=b'', misc=b'', strict=False):
 

@@ -381,7 +381,7 @@ class PasteBinReport():
         msg.add_alternative(f"""\
         <html>
           <table bgcolor="#000000" style="color: white;padding: 1rem;">
-            <thead>
+            <thead, style='text-align: center;'>
               <tr><td>
               <h1 style='font-family: SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace !important'>
                   c r e d s h e d

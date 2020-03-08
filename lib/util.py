@@ -15,6 +15,11 @@ log = logging.getLogger('credshed.util')
 
 
 def clean_encoding(s):
+    '''
+    Given bytes, try to decode and re-encode
+    If decoding fails, problematic characters are replaced with their hex code
+    E.g. "Pass\\x66word"
+    '''
 
     if type(s) == bytes:
         return decode(s).encode(encoding='utf-8')

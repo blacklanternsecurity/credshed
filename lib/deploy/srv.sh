@@ -20,6 +20,7 @@ Usage: ${0##*/} [option]
         clean   remove artifacts such as docker containers & images
         delete  delete entire database
         rebuild alias for "stop delete prep start init"
+        reset   delete database contents & reinsert test data
 
 EOF
 exit 0
@@ -288,13 +289,7 @@ services:" | tee -a docker-compose.yml | fgrep -v MONGO_INITDB_ROOT
     echo "
 networks:
     mongo_main:
-        ipam:
-            config:
-            - subnet: 172.27.0.0/24
-    mongo_meta:
-        ipam:
-            config:
-            - subnet: 172.27.1.0/24" | tee -a docker-compose.yml
+    mongo_meta:" | tee -a docker-compose.yml
 
     # protect docker-compose.yml
     sudo chown root:root docker-compose.yml
@@ -342,17 +337,14 @@ build_mongo_db_scripts()
 use credshed
 db.createCollection("accounts")
 sh.enableSharding("credshed")
-sh.shardCollection("credshed.accounts", {_id: 1})
-db.accounts.insert({"_id" : "moc.elpmaxe|n4bQgYhMB98TxttN", "e" : "test", "u": "test", "p" : "Password1", "h": "2ac9cb7dc02b3c0083eb70898e549b63", "m": "Test account (added automatically)"})
-db.sources.insert({"_id" : NumberInt(1), "name" : "test", "filename": "/tmp/test.txt", "modified_date": ISODate(), "import_finished": true, "created_date": ISODate(), "hash": "0000000000000000000000000000000000000000", "files": ["/tmp/test.txt"], "description": "test", "top_domains": {"example.com": NumberInt(1)}, "top_words": {"password": NumberInt(1)}, "total_accounts": NumberInt(1), "unique_accounts": NumberInt(1), "filesize": NumberInt(26) })' | sudo tee "${mongo_script_dir}/init-main_db.js"
+sh.shardCollection("credshed.accounts", {_id: 1})' | sudo tee "${mongo_script_dir}/init-main_db.js"
 
 
     echo '
 use credshed
-db.createCollection("account_metadata")
+db.createCollection("accounts_metadata")
 sh.enableSharding("credshed")
-sh.shardCollection("credshed.account_metadata", {_id: 1})
-db.accounts_metadata.insert({"_id" : "moc.elpmaxe|n4bQgYhMB98TxttN", "s": [NumberInt(1)] })' | sudo tee "${mongo_script_dir}/init-meta_db.js"
+sh.shardCollection("credshed.accounts_metadata", {_id: 1})' | sudo tee "${mongo_script_dir}/init-meta_db.js"
 
 }
 
@@ -401,7 +393,7 @@ build_mongo_scripts()
 
 
 
-init_database()
+init_shards()
 {
 
     # intialize config server for primary database
@@ -434,13 +426,66 @@ init_database()
 
     sleep 15
 
-    # create primary database & collections
-    sudo docker-compose exec main_router sh -c "mongo -u ${mongo_user} -p ${mongo_pass} --port 27017 < /scripts/init-main_db.js"
-    # create metadata database & collection
-    sudo docker-compose exec meta_router sh -c "mongo -u ${mongo_user} -p ${mongo_pass} --port 27017 < /scripts/init-meta_db.js"
+}
+
+
+# populate the database with test entries
+init_db()
+{
+
+    . ./test_data.sh
+
+    echo "
+use credshed
+db.createCollection('accounts')
+db.accounts.insert(${test_account})
+db.createCollection('sources')
+db.sources.insert(${test_source1})
+db.sources.insert(${test_source2})" | sudo tee "${mongo_script_dir}/tmp.js"
+
+    exec_tmp_js main
+
+
+    echo "
+use credshed
+db.createCollection('accounts_metadata')
+db.accounts_metadata.insert(${test_account_metadata})" | sudo tee "${mongo_script_dir}/tmp.js"
+
+    exec_tmp_js meta
 
 }
 
+
+# delete database content without changing container status
+reset_db()
+{
+
+    # delete main db
+    echo '
+use credshed
+db.accounts.deleteMany({})
+db.sources.deleteMany({})' | sudo tee "${mongo_script_dir}/tmp.js"
+
+    exec_tmp_js main
+    
+
+    # delete meta db
+    echo '
+use credshed
+db.accounts_metadata.deleteMany({})' | sudo tee "${mongo_script_dir}/tmp.js"
+
+    exec_tmp_js meta
+
+}
+
+
+# executes the script in "${mongo_script_dir}/tmp.js" in either main or meta router
+exec_tmp_js()
+{
+
+    sudo docker-compose exec "${1}_router" sh -c "mongo -u ${mongo_user} -p ${mongo_pass} --port 27017 < /scripts/tmp.js"
+
+}
 
 
 if [ $EUID -eq 0 ]
@@ -468,6 +513,7 @@ do
         -i|-I|--init|init|3)
             do_start=true
             do_init_db=true
+            do_init_shards=true
             ;;
         -c|-C|--clean|clean)
             do_stop=true
@@ -496,6 +542,12 @@ do
             do_delete=true
             do_db_prep=true
             do_start=true
+            do_init_shards=true
+            do_init_db=true
+            ;;
+        --reset|reset|-r|-R)
+            do_start=true
+            do_reset_db=true
             do_init_db=true
             ;;
         -h|--help|help)
@@ -536,9 +588,17 @@ then
     sleep 5
 fi
 
+if [ -n "$do_reset_db" ]
+then
+    reset_db
+fi
+
+if [ -n "$do_init_shards" ]
+then
+    init_shards
+fi
+
 if [ -n "$do_init_db" ]
 then
-    start_daemon
-    sleep 5
-    init_database
+    init_db
 fi
