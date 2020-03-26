@@ -5,6 +5,8 @@
 import logging
 from copy import copy
 from pathlib import Path
+from multiprocessing import Queue
+from logging.handlers import QueueHandler, QueueListener
 
 
 ### PRETTY COLORS ###
@@ -53,20 +55,32 @@ class ColoredFormatter(logging.Formatter):
 console = logging.StreamHandler()
 # tell the handler to use this format
 console.setFormatter(ColoredFormatter('%(levelname)s %(message)s'))
-logging.getLogger('credshed').handlers = [console]
 
 
 ### LOG TO FILE ###
 
+root_logger = logging.getLogger('credshed')
+
+# set up a multiprocessing queue to allow easy logging from subprocesses
+log_queue = Queue()
+listener = QueueListener(log_queue, console)
+log_sender = QueueHandler(log_queue)
+root_logger.handlers = [log_sender]
+#root_logger.handlers = [console]
+
 filename = 'credshed.log'
-log = logging.getLogger('credshed.logger')
-log_format='%(asctime)s\t%(levelname)s\t%(name)s\t%(message)s'
 log_filename = str(Path('/var/log/credshed') / filename)
 
+# use logging to log logging logs
+log = logging.getLogger('credshed.logger')
+
 try:
-    logging.basicConfig(filename=log_filename, format=log_format)
+    file_handler = logging.FileHandler(log_filename)
 except (PermissionError, FileNotFoundError):
     log.warning(f'Unable to create log file at {log_filename}, logging to current directory')
-    logging.basicConfig(filename=filename, format=log_format)
+    file_handler = logging.FileHandler(filename)
 
-logging.getLogger('credshed').setLevel(logging.DEBUG)
+log_format = '%(asctime)s\t%(levelname)s\t%(name)s\t%(message)s'
+file_handler.setFormatter(logging.Formatter(log_format))
+root_logger.addHandler(file_handler)
+root_logger.setLevel(logging.DEBUG)

@@ -26,14 +26,15 @@ class CredShed():
         ...
     '''
 
-    def __init__(self, stdout=False):
-
-        self.stdout = stdout
+    def __init__(self):
 
         try:
             self.db = DB()
-        except pymongo.errors.ServerSelectionTimeoutError as e:
-            raise CredShedTimeoutError(f'Connection to database timed out: {e}')
+        except pymongo.errors.PyMongoError as e:
+            raise CredShedDatabaseError(f'Failed to connect to database: {e}')
+
+        if not self.db.meta_client:
+            log.warning('Continuing without metadata support')
 
         self.STOP = False
 
@@ -83,7 +84,8 @@ class CredShed():
 
 
 
-    def import_file(self, filename, strict=False, unattended=True, threads=2, show=False, force=False):
+    @staticmethod
+    def import_file(filename, strict=False, unattended=True, threads=2, show=False, force=False, stdout=False):
         '''
         Takes a filename as input
         Returns a two-tuple: (unique_accounts, total_accounts)
@@ -92,6 +94,10 @@ class CredShed():
 
         Source(filename) --> Source.parse() --> Injestor(source)
         '''
+
+        log.info(f'Parsing file {filename}')
+
+        start_time = datetime.now()
 
         source = Source(filename)
         # make sure the file is readable
@@ -103,7 +109,7 @@ class CredShed():
 
         source.parse(unattended=unattended)
 
-        if self.stdout:
+        if stdout:
             for account in source:
                 sys.stdout.buffer.write(account.bytes + b'\n')
 
@@ -113,9 +119,8 @@ class CredShed():
                 injestor = Injestor(source, threads=threads)
                 for unique_account in injestor.start(force=force):
                     source.unique_accounts += 1
-                    if show and not self.stdout:
-                        print(unique_account)
-
+                    if show and not stdout:
+                        log.info(unique_account)
 
             except KeyboardInterrupt:
                 if unattended:
@@ -128,5 +133,24 @@ class CredShed():
                         log.info(f'Cancelling import')
                         raise
                     return (0, 0)
+
+
+        end_time = datetime.now()
+        time_elapsed = (end_time - start_time).total_seconds()
+
+        if source.total_accounts > 0:
+            log.info('{:,}/{:,} ({:.2f}%) new accounts in "{}"  Time elapsed: {:02d}:{:02d}:{:02d}'.format(
+                source.unique_accounts,
+                source.total_accounts,
+                ((source.unique_accounts / source.total_accounts) * 100), 
+                filename,
+                # // == floor division
+                int(time_elapsed // 3600),
+                int((time_elapsed % 3600) // 60),
+                int(time_elapsed % 60)
+            ))
+
+        else:
+            log.warning(f'No accounts found in {filename}')
 
         return (source.unique_accounts, source.total_accounts)

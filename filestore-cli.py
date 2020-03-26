@@ -6,6 +6,7 @@ import sys
 import logging
 import argparse
 from lib import logger
+import multiprocessing
 from lib.errors import *
 from pathlib import Path
 from lib.filestore import *
@@ -18,22 +19,10 @@ log = logging.getLogger('credshed.filestore.cli')
 
 def main(options):
 
-    f = Filestore()
+    f = Filestore(store_dir=options.dir)
 
     if options.extract:
         f.extract_files()
-
-    # rebuild the index if it's empty or if requested
-    if not f.index or options.update_index or options.rebuild_index:
-        if options.rebuild_index:
-            log.warning('Clearing index in preparation for rebuild')
-        else:
-            f.index.read()
-        f.update_index()
-        f.index.write()
-
-    if options.list_index:
-        print(json.dumps(f.index.json, indent=4, sort_keys=True))
 
 
 
@@ -41,11 +30,8 @@ if __name__ == '__main__':
 
     parser = argparse.ArgumentParser()
 
-    parser.add_argument('-l', '--list-index',   action='store_true',    help='list filestore index')
-    parser.add_argument('-u', '--update-index', action='store_true',    help='update filestore index')
-    parser.add_argument('-r', '--rebuild-index',action='store_true',    help='discard & rebuild filestore index (time-consuming)')
     parser.add_argument('-e', '--extract',      action='store_true',    help='decompress all supported archives')
-    # parser.add_argument('-dd', '--deduplicate', action='store_true',    help='replace duplicate files with symlinks to original')
+    parser.add_argument('--dir',                type=Path,              help='override filestore dir in credshed.config')
     parser.add_argument('-d', '--debug',        action='store_true',    help='display debugging info')
 
     try:
@@ -62,7 +48,9 @@ if __name__ == '__main__':
         else:
             logging.getLogger('credshed').setLevel(logging.INFO)
 
-        main(options)
+        p = multiprocessing.Process(target=main, args=(options,))
+        p.start()
+        logger.listener.start()
 
     except AssertionError as e:
         log.error(f'AssertionError {e}')
@@ -78,3 +66,10 @@ if __name__ == '__main__':
 
     except (KeyboardInterrupt, BrokenPipeError):
         log.error(f'Interrupted')
+
+    finally:
+        try:
+            p.join()
+            logger.listener.stop()
+        except:
+            pass

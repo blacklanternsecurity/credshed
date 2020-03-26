@@ -44,11 +44,13 @@ class DB():
         if not (self.main_client or self.meta_client):
             raise CredShedDatabaseError('Failed to contact both main and metadata databases')
 
-        #self.accounts.create_index([('u', pymongo.ASCENDING)], sparse=True, background=True)
-        #self.accounts.create_index([('e', pymongo.ASCENDING)], sparse=True, background=True)
-
         # sources
         self.sources = self.main_db.sources
+
+        # create indexes
+        self.sources.create_index([('hash', pymongo.ASCENDING)], background=True)
+        #self.accounts.create_index([('u', pymongo.ASCENDING)], sparse=True, background=True)
+        #self.accounts.create_index([('e', pymongo.ASCENDING)], sparse=True, background=True)
 
 
 
@@ -267,12 +269,15 @@ class DB():
         Returns new or existing Leak ID
         DOES NOT import accounts (use the Injestor)
 
-        The reason we need _id AND hash is because _id is used in accounts_metadata to keep track of account/source associations
+        The reason we need _id AND hash is because _id is used in accounts_metadata
+        to keep track of account/source associations.  the hash takes up too much space
 
         Meant to be called twice:
             - Once before a source is imported in order to get the Source ID
             - Again after a source is imported to update file list and unique account counters
         '''
+        # {'name': '/etc/ufw/after6.rules.20180722_211440', 'filename': PosixPath('/etc/ufw/after6.rules.20180722_211440'), 'filesize': 915,
+        # 'description': 'Unattended import at 2020-03-22T12:12:09.872', 'total_accounts': 0, 'unique_accounts': 0, 'id': None}
 
         try:
             # see if it already exists - try to find by hash
@@ -282,6 +287,7 @@ class DB():
 
         # if it doesn't exist, create it
         if source_in_db is None:
+            log.debug(f'{source.filename} not yet in DB, adding...')
 
             id_counter = self._make_source_id()
 
@@ -320,7 +326,7 @@ class DB():
 
         # otherwise, update it
         else:
-            # log.info(f'Matching hash for {self.filename} found')
+            log.debug(f'Matching hash for {source.filename} aready exists, updating...')
 
             self.sources.update_one({'hash': source.hash}, {
                 '$addToSet': {
@@ -339,20 +345,33 @@ class DB():
 
             })
 
-            # only update the top domains if import finished successfully
+            # only update these if import finished successfully
             # this prevents messing up existing data when cancelling an import operation
             if import_finished:
-                self.sources.update_one({'hash': source.hash}, {
-                    '$set': {
-                        'top_domains': source.top_domains(100),
-                        'top_misc_basewords': source.top_misc_basewords(100),
-                        'top_password_basewords': source.top_password_basewords(100),
-                    }
-                })
 
-            # refresh data   
-            source_in_db = self.sources.find_one({'_id': source_in_db['_id']})
-            return source_in_db
+                # if the import finished and there still aren't any accounts
+                if source.total_accounts == 0:
+                    log.info(f'Import finished but no accounts found; deleting source {source.filename}')
+                    # delete it
+                    self.sources.delete_one({'hash': source.hash})
+
+                else:
+                    self.sources.update_one({'hash': source.hash}, {
+                        '$set': {
+                            'top_domains': source.top_domains(100),
+                            'top_misc_basewords': source.top_misc_basewords(100),
+                            'top_password_basewords': source.top_password_basewords(100),
+                        }
+                    })
+
+            # refresh data
+            refreshed_source = self.sources.find_one({'hash': source.hash})
+
+            if refreshed_source is None:
+                # if this happens, another thread deleted the source, probably because it's empty
+                return source_in_db
+            else:
+                return refreshed_source
 
 
 
@@ -528,7 +547,6 @@ class DB():
 
     def _mongo_main_add_batch(self, batch):
 
-
         unique_accounts = 0
         mongo_batch = []
 
@@ -565,6 +583,7 @@ class DB():
             mongo_batch.append(pymongo.UpdateOne({'_id': _id}, {'$addToSet': {'s': source_id}}, upsert=True))
 
         result = self.accounts_metadata.bulk_write(mongo_batch, ordered=False)
+
         return result
 
 

@@ -70,7 +70,9 @@ if __name__ == '__main__':
         else:
             logging.getLogger('credshed').setLevel(logging.INFO)
 
-        main(options)
+        p = multiprocessing.Process(target=main, args=(options,))
+        p.start()
+        logger.listener.start()
 
     except AssertionError as e:
         errprint('\n\n[!] {}\n'.format(str(e)))
@@ -82,3 +84,10 @@ if __name__ == '__main__':
 
     except KeyboardInterrupt:
         errprint('\n\n[!] Interrupted')
+
+    finally:
+        try:
+            p.join()
+            logger.listener.stop()
+        except:
+            pass

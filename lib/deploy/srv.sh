@@ -9,8 +9,6 @@ usage()
     cat <<EOF
 Usage: ${0##*/} [option]
 
-  MAKE SURE you have { "userns-remap": "default" } in /etc/docker/daemon.json
-
   Options:
 
     [1] prep    create docker-compose.yml & init scripts
@@ -30,15 +28,6 @@ exit 0
 
 start_daemon()
 {
-
-    if ! grep -q "dockremap:231000:65536" /etc/subuid
-    then
-        echo "dockremap:231000:65536" | sudo tee /etc/subuid >/dev/null 2>&1
-    fi
-    if ! grep -q "dockremap:231000:65536" /etc/subgid
-    then
-        echo "dockremap:231000:65536" | sudo tee /etc/subgid >/dev/null 2>&1
-    fi
 
     # cache sudo privileges to prevent script from dying
     sudo echo -n ''
@@ -215,13 +204,13 @@ services:" | tee -a docker-compose.yml | fgrep -v MONGO_INITDB_ROOT
 
     # create parent directory for primary config server
     sudo mkdir -p "${mongo_main_dir}/mongo_config_0" 2>/dev/null
-    sudo chown 231999:231999 "${mongo_main_dir}/mongo_config_0"
-    sudo chmod 777 "${mongo_main_dir}/mongo_config_0"
+    sudo chown 999:999 "${mongo_main_dir}/mongo_config_0"
+    #sudo chmod 777 "${mongo_main_dir}/mongo_config_0"
 
     # create parent directory for metatdata config server
     sudo mkdir -p "${mongo_meta_dir}/mongo_config_0" 2>/dev/null
-    sudo chown 231999:231999 "${mongo_meta_dir}/mongo_config_0"
-    sudo chmod 777 "${mongo_main_dir}/mongo_config_0"
+    sudo chown 999:999 "${mongo_meta_dir}/mongo_config_0"
+    #sudo chmod 777 "${mongo_main_dir}/mongo_config_0"
 
     # create directories & containers for primary database shards
     for shard in $(seq 1 $num_shards)
@@ -230,7 +219,7 @@ services:" | tee -a docker-compose.yml | fgrep -v MONGO_INITDB_ROOT
         if [ -n "$dir_name" -a ! -d "$dir_name" ]
         then
             sudo mkdir -p "$dir_name" 2>/dev/null
-            sudo chown 231999:231999 "$dir_name"
+            sudo chown 999:999 "$dir_name"
             sudo chmod 770 "$dir_name"
         fi
 
@@ -259,7 +248,7 @@ services:" | tee -a docker-compose.yml | fgrep -v MONGO_INITDB_ROOT
         if [ -n "$dir_name" -a ! -d "$dir_name" ]
         then
             sudo mkdir -p "$dir_name" 2>/dev/null
-            sudo chown 231999:231999 "$dir_name"
+            sudo chown 999:999 "$dir_name"
             sudo chmod 770 "$dir_name"
         fi
 
@@ -281,8 +270,8 @@ services:" | tee -a docker-compose.yml | fgrep -v MONGO_INITDB_ROOT
     done
 
     # set permissions for remapped docker UIDs/GIDs
-    #sudo chown -R 231999:231999 "${mongo_main_dir}"
-    #sudo chown -R 231999:231999 "${mongo_meta_dir}"
+    sudo chown -R 999:999 "${mongo_main_dir}"
+    sudo chown -R 999:999 "${mongo_meta_dir}"
     #sudo chmod -R 770 "${mongo_main_dir}"
     #sudo chmod -R 770 "${mongo_meta_dir}"
 
@@ -385,7 +374,7 @@ build_mongo_scripts()
 
     build_mongo_db_scripts
 
-    sudo chown -R 231999:231999 "${mongo_script_dir}"
+    sudo chown -R 999:999 "${mongo_script_dir}"
     sudo chmod -R 770 "${mongo_script_dir}"
     sudo chmod 600 "${mongo_script_dir}/mongodb.key"
 

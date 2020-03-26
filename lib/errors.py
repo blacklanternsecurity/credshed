@@ -19,9 +19,6 @@ class CredShedConfigError(CredShedError):
 class CredShedMetadataError(CredShedError):
     pass
 
-class CredShedTimeoutError(CredShedError):
-    pass
-
 class CredShedDatabaseError(CredShedError):
     pass
 

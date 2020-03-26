@@ -456,7 +456,8 @@ class TextParse():
             l.remove(rand_choice)
             log.warning(' ' + str(rand_choice)[2:-1])
         log.warning('=' * 60)
-        self.input_delimiter = input(f'Delimiter [{str(self.input_delimiter)[2:-1]}] > ').encode() or self.input_delimiter
+        log.warning(f'Delimiter [{str(self.input_delimiter)[2:-1]}] > ')
+        self.input_delimiter = input().encode() or self.input_delimiter
 
         # handle case where delimiter is hexidecimal
         hex_prefixes = [b'\\x', b'0x']

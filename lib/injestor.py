@@ -4,10 +4,11 @@
 
 import logging
 from .db import DB
+from . import logger
 from .errors import *
-import multiprocessing
 from time import sleep
 from queue import Empty
+from .processpool import *
 from datetime import datetime, timedelta
 
 
@@ -27,150 +28,67 @@ class Injestor():
         self.db = DB()
         self.finished = False
 
-        # queue for unique accounts
-        self.result_queue = multiprocessing.Queue()
-
 
 
     def start(self, force=False):
 
         self.unique_accounts = 0
-        import_finished = False
 
-        if (not self.finished) or force:
+        # call db.add_source for the first time to create it in the database
+        source = self.db.add_source(self.source)
+        if source is None:
+            from time import sleep
+            log.critical('WTF11111111111111111111111111111111111111111')
+            log.critical(self.source.to_doc())
+            log.critical(f'HASH: {self.source.hash}')
+            sleep(5)
 
-            log.info(f'Adding source {self.source.filename} using {self.threads:,} threads')
-
-            source = self.db.add_source(self.source)
-
-            if source['import_finished'] is True and not force:
-                log.warning(f'Import already finished for {self.source.filename}, skipping')
-
-            else:
-
-                try:
-
-                    source_id = source['_id']
-                    pool = [None] * self.threads
-                    batch_counter = 1
-
-                    for batch in self._gen_batches():
-                        '''
-                        upserted_accounts = self._injest(batch, source_id)
-                        for a in upserted_accounts:
-                            yield a
-                        '''
-                    
-                        try:
-
-                            # loop until batch has been submitted
-                            while 1:
-
-                                for unique_account in self.empty_result_queue():
-                                    yield unique_account
-
-
-                                #self.injest(batch, source_id, self.result_queue)
-                                #assert False
-
-                                # make sure processes are started
-                                for i in range(len(pool)):
-                                    process = pool[i]
-                                    if process is None or not process.is_alive():
-                                        if process is not None:
-                                            log.debug(f'Injestor process #{i+1} has finished')
-                                        pool[i] = multiprocessing.Process(target=self.injest, args=(batch, source_id, self.result_queue), daemon=True)
-                                        log.info(f'Injesting batch #{batch_counter} - {self.total_accounts:,} total, {self.unique_accounts:,} unique')
-                                        batch_counter += 1
-                                        pool[i].start()
-                                        # move on to next batch
-                                        assert False
-
-                                # prevent unnecessary CPU usage
-                                sleep(.1)
-
-                        except AssertionError:
-                            continue
-
-                    for unique_account in self.empty_result_queue():
-                        yield unique_account
-
-                    import_finished = True
-
-                except KeyboardInterrupt:
-                    log.warning('Stopping import')
-
-                except Exception as e:
-                    log.critical(e)
-
-                finally:
-                    log.info('Waiting for threads to finish')
-                    # wait until all threads are stopped:
-                    while 1:
-                        finished_threads = [p is None or not p.is_alive() for p in pool]
-                        if all(finished_threads):
-                            break
-                        else:
-                            log.debug(f'Waiting for {finished_threads.count(False):,} threads to finish for {self.source.filename}')
-                            sleep(1)
-
-                        for unique_account in self.empty_result_queue():
-                            yield unique_account
-
-                    # update counters
-                    self.db.add_source(self.source, import_finished=import_finished)
-                    
-                    if not import_finished:
-                        raise KeyboardInterrupt
+        if self.finished and not force:
+            log.warning(f'Import already finished for {self.source.filename}, skipping')
 
         else:
-            log.error(f'Injestor for {self.source.filename} already finished')
+            log.info(f'Adding source {self.source.filename} using {self.threads:,} threads')
 
-
-
-    def empty_result_queue(self):
-
-        # make sure the result queue is empty
-        while 1:
             try:
-                unique_accounts = self.result_queue.get_nowait()
-                log.debug(f'{len(unique_accounts):,} unique accounts')
-                try:
-                    log.error('Database error encountered:\n    ' + '\n'.join([str(e) for e in unique_accounts['errors']]))
-                except TypeError:
-                    for unique_account in unique_accounts:
-                        self.unique_accounts += 1
-                        yield unique_account                
-            except Empty:
-                break
+                source_id = source['_id']
+            except TypeError:
+                from time import sleep
+                log.critical('WTF2222222222222222222222222222222222222222222')
+                log.critical(self.source.to_doc())
+                log.critical(f'HASH: {self.source.hash}')
+                sleep(5)
+            pool = [None] * self.threads
+            batch_counter = 1
+
+            with ProcessPool(self.threads) as pool:
+                for unique_accounts in pool.map(self.injest, self._gen_batches(), args=(source_id,)):
+                    log.debug(f'{len(unique_accounts):,} unique accounts')
+                    try:
+                        log.error('Database error encountered:\n    ' + '\n'.join([str(e) for e in unique_accounts['errors']]))
+                    except TypeError:
+                        for unique_account in unique_accounts:
+                            self.unique_accounts += 1
+                            yield unique_account
+
+            # call db.add_source for the second time to update counters
+            # or delete the source if it didn't contain anything
+            self.db.add_source(self.source, import_finished=True)
 
 
     @staticmethod
-    def injest(batch, source_id, result_queue):
+    def injest(batch, source_id):
 
         try:
 
             with DB() as db:
-
-                result_queue.put(db.add_accounts(batch, source_id))
-
-                # required so that the queue's .put() call finishes
-                sleep(.5)
+                return db.add_accounts(batch, source_id)
 
         except KeyboardInterrupt:
-            pass
+            log.critical('Interrupted')
 
-
-
-    @staticmethod
-    def _injest(batch, source_id):
-
-        upserted_accounts = []
-
-        with DB() as db:
-            upserted_accounts = db.add_accounts(batch, source_id)
-
-        return upserted_accounts
+        except Exception as e:
+            import traceback
+            log.critical(traceback.format_exc())
 
 
 

@@ -213,7 +213,11 @@ class Source():
 
     def __len__(self):
 
-        length = len(self.accounts)
+        try:
+            length = len(self.accounts)
+        except TypeError:
+            length = 0
+
         if length > 0:
             return length
         else:

@@ -89,12 +89,13 @@ def hash_file(filename):
 
     try:
         # if filestore is active, hash through the index in case it's already been cached
-        return filestore.filestore.index.hash(filename)
+        return filestore.filestore.hash_file(filename)
 
     # otherwise, just dew it
     except (AttributeError, FilestoreHashError) as e:
         log.debug(e)
-        return filestore.util.hash_file(filename)
+        f = filestore.Filestore()
+        return f.hash_file(filename)
 
 
 def size(filename):
@@ -102,10 +103,11 @@ def size(filename):
     return filestore.util.size(filename)
 
 
-def recursive_file_list(paths):
+def recursive_file_list(paths, compressed=True):
     '''
     accepts single or multiple files/directories
     yields filenames
+    compressed = whether or not to include compressed files
     '''
     if not type(paths) == list:
         paths = [paths]
@@ -113,16 +115,8 @@ def recursive_file_list(paths):
     paths = [Path(p).resolve() for p in paths]
 
     for path in paths:
-
-        if path.is_file() and not path.is_symlink():
-            yield path
-
-        elif path.is_dir():
-            for dir_name, dirnames, filenames in os.walk(path):
-                for file in filenames:
-                    file = Path(dir_name) / file
-                    if file.is_file() and not file.is_symlink():
-                        yield file
+        for file in filestore.util.list_files(path, compressed=compressed):
+            yield file
 
 
 def bytes_to_human(_bytes):

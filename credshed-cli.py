@@ -9,12 +9,13 @@ import argparse
 from lib import util
 from lib import logger
 from time import sleep
+import multiprocessing
 from lib.errors import *
 from pathlib import Path
 from lib.credshed import *
 from lib import validation
+from lib.processpool import *
 from datetime import datetime
-from multiprocessing import cpu_count
 
 # set up logging
 log = logging.getLogger('credshed.cli')
@@ -24,13 +25,8 @@ class CredShedCLI(CredShed):
 
     def __init__(self, options):
 
-        super().__init__(stdout=options.stdout)
-
+        super().__init__()
         self.options = options
-
-        if not self.db.meta_client:
-            log.warning('Continuing without metadata support')
-
 
     def search(self):
 
@@ -85,70 +81,76 @@ class CredShedCLI(CredShed):
         print(super().db_stats())
 
 
+    @classmethod
+    def import_file(cls, filename, options):
+
+        try:
+            return super().import_file(
+                filename,
+                unattended=options.unattended,
+                threads=options.threads,
+                show=options.show_unique,
+                force=options.force_injest,
+                stdout=options.stdout,
+            )
+
+        except InjestorError as e:
+            log.error(f'Injestor Error: {e}')
+            return (0,0)
+
+        except KeyboardInterrupt:
+            log.critical('Interrupted')
+            return (0,0)
+
+
     def import_files(self):
+        '''
+        benchmark for full /etc import (1,500 files):
+            3 process, main thread: 2:13
+            3 processes: 1:27
+        '''
 
-        total_unique_accounts = 0
+        total_accounts = 0
+        unique_accounts = 0
 
-        # files that have at least one account (even if it's not unique)
+        # files that have at least one account (even if it's not been seen before)
         interesting_files = 0
 
         major_start_time = datetime.now()
 
-        filelist = list(util.recursive_file_list(self.options.injest))
+        # make a list of all files (excluding compressed ones)
+        filelist = list(util.recursive_file_list(self.options.injest, compressed=False))
         log.info(f'Importing {len(filelist):,} files')
         #sleep(2)
 
-        try:
-            for filename in filelist:
+        # if unattended, thread like it's 1999
+        if self.options.unattended:
+            file_threads = 3
+            self.options.threads = max(1, int(self.options.threads/3))
 
-                log.info(f'Parsing file {filename}')
-
-                minor_start_time = datetime.now()
-
-                try:
-                    unique_accounts, total_accounts = self.import_file(
-                        filename,
-                        unattended=self.options.unattended,
-                        threads=self.options.threads,
-                        show=options.show_unique,
-                        force=options.force_injest
-                    )
-                    if total_accounts > 0:
+            with ProcessPool(file_threads) as pool:
+                for unique, total in pool.map(self.import_file, filelist, (self.options,)):
+                    if total > 0:
                         interesting_files += 1
-                    else:
-                        log.warning(f'No accounts found in {filename}')
-                    if unique_accounts > 0:
-                        total_unique_accounts += unique_accounts
+                    unique_accounts += unique
+                    total_accounts += total
 
-                    end_time = datetime.now()
-                    time_elapsed = (end_time - minor_start_time).total_seconds()
+        # otherwise, just be normal
+        else:
+            for filename in filelist:
+                unique, total = self.import_file(filename, self.options)
+                if total > 0:
+                    interesting_files += 1
+                unique_accounts += unique
+                total_accounts += total
 
-                    if total_accounts > 0:
-                        log.info('{:,}/{:,} ({:.2f}%) new accounts in "{}"  Time elapsed: {:02d}:{:02d}:{:02d}'.format(
-                            unique_accounts,
-                            total_accounts,
-                            ((unique_accounts / total_accounts) * 100), 
-                            filename,
-                            # // == floor division
-                            int(time_elapsed // 3600),
-                            int((time_elapsed % 3600) // 60),
-                            int(time_elapsed % 60)
-                        ))
-
-                except InjestorError as e:
-                    log.error(f'Injestor Error: {e}')
-                    continue
-
-        except KeyboardInterrupt:
-            sys.stderr.write('\n')
-            log.warning('Import operations cancelled')
-            pass
 
         end_time = datetime.now()
         time_elapsed = (end_time - major_start_time).total_seconds()
 
-        log.info('{:,} unique accounts from {:,}/{:,} files in {:02d}:{:02d}:{:02d}'.format(
-            total_unique_accounts,
+        log.info('{:,}/{:,} unique accounts from {:,}/{:,} files in {:02d}:{:02d}:{:02d}'.format(
+            unique_accounts,
+            total_accounts,
             interesting_files,
             len(filelist),
             int(time_elapsed // 3600),
@@ -238,13 +240,25 @@ def main(options):
         if options.db_stats:
             credshed.db_stats()
 
+    except AssertionError as e:
+        log.critical(e)
+        sys.exit(2)
+
+    except argparse.ArgumentError as e:
+        log.error(e)
+        log.error('Check your syntax')
+        sys.exit(2)
+
+    except (KeyboardInterrupt, BrokenPipeError):
+        log.critical('Interrupted')
+        credshed.STOP = True
+
     except CredShedError as e:
         log.error('{}: {}\n'.format(e.__class__.__name__, str(e)))
 
-    except KeyboardInterrupt:
-        credshed.STOP = True
-        log.warning('Stopping CLI, please wait for threads to finish')
-        return
+    except Exception as e:
+        import traceback
+        log.critical(traceback.format_exc())
 
     finally:
         # close mongodb connection
@@ -256,7 +270,7 @@ if __name__ == '__main__':
 
     parser = argparse.ArgumentParser()
     # 2 <= threads <= 12
-    num_cores = cpu_count()
+    num_cores = multiprocessing.cpu_count()
     #default_threads = max(2, min(12, (int(num_cores/1.5)+1)))
     default_threads = int(num_cores)
 
@@ -291,16 +305,13 @@ if __name__ == '__main__':
             logging.getLogger('credshed').setLevel(logging.DEBUG)
             options.verbose = True
 
-        main(options)
+        p = multiprocessing.Process(target=main, args=(options,))
+        p.start()
+        logger.listener.start()
 
-    except AssertionError as e:
-        log.critical(e)
-        sys.exit(2)
-
-    except argparse.ArgumentError as e:
-        log.error(e)
-        log.error('Check your syntax')
-        sys.exit(2)
-
-    except (KeyboardInterrupt, BrokenPipeError):
-        log.critical('Interrupted')
+    finally:
+        try:
+            p.join()
+            logger.listener.stop()
+        except:
+            pass
