@@ -247,6 +247,10 @@ def main(options):
             if options.db_stats:
                 credshed.db_stats()
 
+        except (KeyboardInterrupt, BrokenPipeError):
+            log.critical('Interrupted')
+            credshed.STOP = True
+
         except AssertionError as e:
             log.critical(e)
             sys.exit(2)
@@ -316,10 +320,6 @@ if __name__ == '__main__':
         log.error(e)
         log.error('Check your syntax')
         sys.exit(2)
-
-    except (KeyboardInterrupt, BrokenPipeError):
-        log.critical('Interrupted')
-        credshed.STOP = True
 
     finally:
         try:
