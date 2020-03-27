@@ -17,7 +17,11 @@ class ProcessPool:
             yield i
     '''
 
-    def __init__(self, processes=None, daemon=False):
+    def __init__(self, processes=None, daemon=False, name=''):
+
+        self.name = f'ProcessPool'
+        if name:
+            self.name += f'-{name}'
 
         if processes is None:
             processes = mp.cpu_count()
@@ -51,12 +55,12 @@ class ProcessPool:
                         if process is None or not process.is_alive():
                             if process is not None:
                                 finished_counter += 1
-                                log.debug(f'{finished_counter:,} processes finished')
+                                log.debug(f'{self.name}: {finished_counter:,} processes finished')
                             self.pool[i] = mp.Process(target=self.execute, args=(func,(entry,)+args), \
                                 kwargs=kwargs, daemon=self.daemon)
                             self.pool[i].start()
                             started_counter += 1
-                            log.debug(f'{started_counter:,} processes started')
+                            log.debug(f'{self.name}: {started_counter:,} processes started')
                             # success, move on to next
                             assert False
 
@@ -77,7 +81,7 @@ class ProcessPool:
                 finished_counter += len([p for p in self.pool if p is not None and not p.is_alive()])
                 break
             else:
-                log.debug(f'Waiting for {finished_threads.count(False):,} threads to finish')
+                log.debug(f'{self.name}: Waiting for {finished_threads.count(False):,} threads to finish')
                 sleep(1)
 
         # collect last results
@@ -85,8 +89,8 @@ class ProcessPool:
             yield result
 
         if started_counter > 0:
-            log.debug(f'{started_counter:,} processes started')
-            log.debug(f'{finished_counter:,} processes finished')
+            log.debug(f'{self.name}: {started_counter:,} processes started')
+            log.debug(f'{self.name}: {finished_counter:,} processes finished')
 
 
     @staticmethod

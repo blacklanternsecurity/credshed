@@ -16,6 +16,7 @@ from lib.credshed import *
 from lib import validation
 from lib.processpool import *
 from datetime import datetime
+from lib.filestore import util as filestore_util
 
 # set up logging
 log = logging.getLogger('credshed.cli')
@@ -84,6 +85,10 @@ class CredShedCLI(CredShed):
     @classmethod
     def import_file(cls, filename, options):
 
+        if filestore_util.is_compressed(str(filename)):
+            log.warning(f'Skipping compressed / encrypted file: {file}')
+            return (0,0)
+
         try:
             return super().import_file(
                 filename,
@@ -119,7 +124,7 @@ class CredShedCLI(CredShed):
         major_start_time = datetime.now()
 
         # make a list of all files (excluding compressed ones)
-        filelist = list(util.recursive_file_list(self.options.injest, compressed=False))
+        filelist = list(util.recursive_file_list(self.options.injest))
         log.info(f'Importing {len(filelist):,} files')
         #sleep(2)
 
@@ -128,7 +133,7 @@ class CredShedCLI(CredShed):
             file_threads = 3
             self.options.threads = max(1, int(self.options.threads/3))
 
-            with ProcessPool(file_threads) as pool:
+            with ProcessPool(file_threads, name='Import') as pool:
                 for unique, total in pool.map(self.import_file, filelist, (self.options,)):
                     if total > 0:
                         interesting_files += 1
@@ -216,53 +221,46 @@ class CredShedCLI(CredShed):
 def main(options):
 
     try:
-        credshed = CredShedCLI(options)
-    except CredShedError as e:
-        log.critical('{}: {}\n'.format(e.__class__.__name__, str(e)))
-        sys.exit(1)
 
-    # if we're importing stuff
-    try:
-        if options.injest:
-            credshed.import_files()
+        try:
+            credshed = CredShedCLI(options)
+        except CredShedError as e:
+            log.critical('{}: {}\n'.format(e.__class__.__name__, str(e)))
+            sys.exit(1)
 
-        elif options.delete_leak is not None:
-            credshed.delete_leak()
+        # if we're importing stuff
+        try:
+            if options.injest:
+                credshed.import_files()
 
-        if options.stats:
-            if not options.search:
-                raise AssertionError('Please specify search query')
-            credshed.query_stats()
+            elif options.delete_leak is not None:
+                credshed.delete_leak()
 
-        elif options.search:
-            credshed.search()
+            if options.stats:
+                if not options.search:
+                    raise AssertionError('Please specify search query')
+                credshed.query_stats()
 
-        if options.db_stats:
-            credshed.db_stats()
+            elif options.search:
+                credshed.search()
 
-    except AssertionError as e:
-        log.critical(e)
-        sys.exit(2)
+            if options.db_stats:
+                credshed.db_stats()
 
-    except argparse.ArgumentError as e:
-        log.error(e)
-        log.error('Check your syntax')
-        sys.exit(2)
+        except AssertionError as e:
+            log.critical(e)
+            sys.exit(2)
 
-    except (KeyboardInterrupt, BrokenPipeError):
-        log.critical('Interrupted')
-        credshed.STOP = True
+        except CredShedError as e:
+            log.error('{}: {}\n'.format(e.__class__.__name__, str(e)))
 
-    except CredShedError as e:
-        log.error('{}: {}\n'.format(e.__class__.__name__, str(e)))
+        finally:
+            # close mongodb connection
+            credshed.db.close()
 
     except Exception as e:
         import traceback
         log.critical(traceback.format_exc())
-
-    finally:
-        # close mongodb connection
-        credshed.db.close()
         
 
 
@@ -305,9 +303,23 @@ if __name__ == '__main__':
             logging.getLogger('credshed').setLevel(logging.DEBUG)
             options.verbose = True
 
-        p = multiprocessing.Process(target=main, args=(options,))
-        p.start()
-        logger.listener.start()
+        if options.injest and not options.unattended:
+            logger.listener.start()
+            main(options)
+
+        else:
+            p = multiprocessing.Process(target=main, args=(options,))
+            p.start()
+            logger.listener.start()
+
+    except argparse.ArgumentError as e:
+        log.error(e)
+        log.error('Check your syntax')
+        sys.exit(2)
+
+    except (KeyboardInterrupt, BrokenPipeError):
+        log.critical('Interrupted')
+        credshed.STOP = True
 
     finally:
         try:

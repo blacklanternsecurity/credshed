@@ -195,7 +195,8 @@ class TextParse():
                 log.warning('=' * 60)
                 log.warning('[?] Which column is this?')
                 log.warning('=' * 60)
-                field = input('[E]mail | [U]ser | [P]assword | [H]ash | [M]isc | [enter] to skip > ').strip().lower()
+                sleep(.2)
+                field = input('[-] [E]mail | [U]ser | [P]assword | [H]ash | [M]isc | [enter] to skip > ').strip().lower()
                 if any([field.startswith(f) for f in self.fields.keys()]):
                     self.mapping[i] = self.fields[field[0]]
                     if field == 'p':
@@ -251,7 +252,8 @@ class TextParse():
                 log.info(f'Unattended parsing of {self.filename} was successful')
                 self.columns_mapped = True
             else:
-                if not input('\nOK? [Y/n] ').lower().startswith('n'):
+                sleep(.2)
+                if not input('\n[-] OK? [Y/n] ').lower().startswith('n'):
                     self.columns_mapped = True
                 else:
                     self.mapping.clear()
@@ -456,8 +458,8 @@ class TextParse():
             l.remove(rand_choice)
             log.warning(' ' + str(rand_choice)[2:-1])
         log.warning('=' * 60)
-        log.warning(f'Delimiter [{str(self.input_delimiter)[2:-1]}] > ')
-        self.input_delimiter = input().encode() or self.input_delimiter
+        sleep(.2)
+        self.input_delimiter = input(f'[-] Delimiter [{str(self.input_delimiter)[2:-1]}] > ').encode() or self.input_delimiter
 
         # handle case where delimiter is hexidecimal
         hex_prefixes = [b'\\x', b'0x']

@@ -36,12 +36,6 @@ class Injestor():
 
         # call db.add_source for the first time to create it in the database
         source = self.db.add_source(self.source)
-        if source is None:
-            from time import sleep
-            log.critical('WTF11111111111111111111111111111111111111111')
-            log.critical(self.source.to_doc())
-            log.critical(f'HASH: {self.source.hash}')
-            sleep(5)
 
         if self.finished and not force:
             log.warning(f'Import already finished for {self.source.filename}, skipping')
@@ -49,18 +43,11 @@ class Injestor():
         else:
             log.info(f'Adding source {self.source.filename} using {self.threads:,} threads')
 
-            try:
-                source_id = source['_id']
-            except TypeError:
-                from time import sleep
-                log.critical('WTF2222222222222222222222222222222222222222222')
-                log.critical(self.source.to_doc())
-                log.critical(f'HASH: {self.source.hash}')
-                sleep(5)
+            source_id = source['_id']
             pool = [None] * self.threads
             batch_counter = 1
 
-            with ProcessPool(self.threads) as pool:
+            with ProcessPool(self.threads, name=self.source.filename) as pool:
                 for unique_accounts in pool.map(self.injest, self._gen_batches(), args=(source_id,)):
                     log.debug(f'{len(unique_accounts):,} unique accounts')
                     try:

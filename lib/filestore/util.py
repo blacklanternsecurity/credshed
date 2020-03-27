@@ -38,17 +38,17 @@ def size(filename):
 
 
 
-def list_files(path, include_symlinks=False, compressed=True):
+def list_files(path, include_symlinks=False):
 
     path = Path(path)
 
-    for dir_name, dir_list, file_list in os.walk(path, followlinks=False):
-        log.debug(f'Found dir {dir_name}')
-        for f in file_list:
-            file = Path(dir_name) / f
-            if not compressed:
-                if is_compressed(str(file)):
-                    log.debug(f'Skipping compressed file {file}')
-                    continue
-            if include_symlinks or not file.is_symlink():
-                yield file
+    if path.is_file():
+        yield path
+
+    else:
+        for dir_name, dir_list, file_list in os.walk(path, followlinks=False):
+            log.debug(f'Found dir: {dir_name}')
+            for f in file_list:
+                file = Path(dir_name) / f
+                if include_symlinks or not file.is_symlink():
+                    yield file

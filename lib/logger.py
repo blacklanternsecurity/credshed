@@ -50,6 +50,18 @@ class ColoredFormatter(logging.Formatter):
 
 
 
+class CustomQueueListener(QueueListener):
+    '''
+    Ignore errors in the _monitor thread that result from a race condition when the program exits
+    '''
+    def _monitor(self):
+        try:
+            super()._monitor()
+        except:
+            pass
+
+
+
 ### LOG TO STDERR ###
 
 console = logging.StreamHandler()
@@ -63,7 +75,7 @@ root_logger = logging.getLogger('credshed')
 
 # set up a multiprocessing queue to allow easy logging from subprocesses
 log_queue = Queue()
-listener = QueueListener(log_queue, console)
+listener = CustomQueueListener(log_queue, console)
 log_sender = QueueHandler(log_queue)
 root_logger.handlers = [log_sender]
 #root_logger.handlers = [console]

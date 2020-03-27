@@ -103,7 +103,7 @@ def size(filename):
     return filestore.util.size(filename)
 
 
-def recursive_file_list(paths, compressed=True):
+def recursive_file_list(paths):
     '''
     accepts single or multiple files/directories
     yields filenames
@@ -115,7 +115,7 @@ def recursive_file_list(paths, compressed=True):
     paths = [Path(p).resolve() for p in paths]
 
     for path in paths:
-        for file in filestore.util.list_files(path, compressed=compressed):
+        for file in filestore.util.list_files(path):
             yield file
 
 

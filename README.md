@@ -56,22 +56,6 @@ Usage: srv.sh [option]
         delete  delete entire database
 ~~~
 
-1. The setup scripts assumes you have the following inside `/etc/docker/daemon.json`:
-~~~
-{
-    "userns-remap": "default"
-}
-~~~
-This remaps "root" inside the MongoDB containers to a higher UID/GID with no local privileges.  Note that the following files will also be created or overwritten:
-  * `/etc/subgid`:
-  ~~~
-  dockremap:231000:65536
-  ~~~
-  * `/etc/subuid`:
-  ~~~
-  dockremap:231000:65536
-  ~~~
-
 2. Take a look at the settings in `credshed/docker/srv.config`
   - Choose the number of shards you want and the location of the database
   - And for the love of geebus, change the password
