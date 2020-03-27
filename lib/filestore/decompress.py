@@ -36,6 +36,7 @@ def is_compressed(filename):
     try:
         log.debug(f'Getting magic type from {filename}')
         file_type = magic.from_file(str(filename)).lower()
+        log.debug(f'Magic type of {filename} is {file_type}')
     except (magic.MagicException, OSError) as e:
         log.debug(f'Error getting magic type from {filename}: {e}')
         return False

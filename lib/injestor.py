@@ -79,7 +79,7 @@ class Injestor():
 
 
 
-    def _gen_batches(self, batch_size=10000):
+    def _gen_batches(self, batch_size=1000):
         '''
         Yields lists of simple "Account" dicts of length <batch_size>
         '''
