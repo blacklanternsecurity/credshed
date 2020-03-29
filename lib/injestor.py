@@ -26,8 +26,6 @@ class Injestor():
         self.source = source
         self.threads = threads
         self.db = DB()
-        self.finished = False
-
 
 
     def start(self, force=False):
@@ -37,14 +35,13 @@ class Injestor():
         # call db.add_source for the first time to create it in the database
         source = self.db.add_source(self.source)
 
-        if self.finished and not force:
+        if source['import_finished'] and not force:
             log.warning(f'Import already finished for {self.source.filename}, skipping')
 
         else:
             log.info(f'Adding source {self.source.filename} using {self.threads:,} threads')
 
             source_id = source['_id']
-            pool = [None] * self.threads
 
             if self.threads > 1:
 
@@ -86,9 +83,14 @@ class Injestor():
 
 
 
-    def _gen_batches(self, batch_size=5000):
+    def _gen_batches(self, batch_size=7500):
         '''
         Yields lists of simple "Account" dicts of length <batch_size>
+
+        1M, 1000 batch size, 8 processes on 4-core cpu: 3m44.828s
+        1M, 5000 batch size, 8 processes on 4-core cpu: 2m20.733s
+        1M, 7500 batch size, 8 processes on 4-core cpu: 2m13.390s
+        1M, 10000 batch size, 8 processes on 4-core cpu: 2m17.838s
         '''
 
         batch = []

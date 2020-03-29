@@ -126,12 +126,12 @@ class CredShedCLI(CredShed):
         # make a list of all files (excluding compressed ones)
         filelist = list(util.recursive_file_list(self.options.injest))
         log.info(f'Importing {len(filelist):,} files')
-        #sleep(2)
+
+        file_threads = min(3, len(filelist))
 
         # if unattended, thread like it's 1999
-        if self.options.unattended:
-            file_threads = 3
-            self.options.threads = max(1, int(self.options.threads/3))
+        if self.options.unattended and file_threads > 1:
+            self.options.threads = max(1, int(self.options.threads/file_threads))
 
             with ProcessPool(file_threads, name='Import') as pool:
                 for unique, total in pool.map(self.import_file, filelist, (self.options,)):
