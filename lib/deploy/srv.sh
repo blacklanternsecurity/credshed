@@ -578,7 +578,7 @@ if [ -n "$do_start" ]
 then
     start_daemon
     start_containers
-    sleep 10
+    sleep 15
 fi
 
 if [ -n "$do_reset_db" ]
