@@ -35,7 +35,6 @@ start_daemon()
     if ! pgrep dockerd >/dev/null
     then
         printf '[+] Starting daemon\n'
-        sleep 4
         sudo systemctl start docker
 
         for i in $(seq 60)
@@ -390,7 +389,7 @@ init_shards()
     sudo docker-compose exec meta_config0 sh -c "mongo -u ${mongo_user} -p ${mongo_pass} --port 27017 < /scripts/init-meta_configserver.js"
 
     # give config servers some time
-    sleep 10
+    sleep 15
 
     # initialize shards for primary database
     for i in $(seq $num_shards)
@@ -413,6 +412,12 @@ init_shards()
     sudo docker-compose exec meta_router sh -c "mongo -u ${mongo_user} -p ${mongo_pass} --port 27017 < /scripts/init-meta_router.js"
 
     sleep 15
+
+    # shard main collection
+    sudo docker-compose exec main_router sh -c "mongo -u ${mongo_user} -p ${mongo_pass} --port 27017 < /scripts/init-main_db.js"
+    # shard meta collection
+    sudo docker-compose exec meta_router sh -c "mongo -u ${mongo_user} -p ${mongo_pass} --port 27017 < /scripts/init-meta_db.js"
+
 
 }
 
