@@ -150,6 +150,8 @@ class Source():
 
     def increment(self, account):
 
+        self.total_accounts += 1
+
         _, domain = account.split_email
         if domain:
             try:
@@ -172,8 +174,6 @@ class Source():
                     self.misc_basewords[word] += 1
                 except KeyError:
                     self.misc_basewords[word] = 1
-
-        self.total_accounts += 1
 
 
     def top_domains(self, limit=10):

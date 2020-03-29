@@ -45,17 +45,22 @@ class Injestor():
 
             source_id = source['_id']
             pool = [None] * self.threads
-            batch_counter = 1
 
-            with ProcessPool(self.threads, name=self.source.filename) as pool:
-                for unique_accounts in pool.map(self.injest, self._gen_batches(), args=(source_id,)):
-                    log.debug(f'{len(unique_accounts):,} unique accounts')
-                    try:
-                        log.error('Database error encountered:\n    ' + '\n'.join([str(e) for e in unique_accounts['errors']]))
-                    except TypeError:
+            if self.threads > 1:
+
+                with ProcessPool(self.threads, name=self.source.filename) as pool:
+                    for unique_accounts in pool.map(self.injest, self._gen_batches(), args=(source_id,)):
+                        log.debug(f'{len(unique_accounts):,} unique accounts')
                         for unique_account in unique_accounts:
                             self.unique_accounts += 1
                             yield unique_account
+
+            else:
+                # don't use multiprocessing if there's only 1 thread
+                for batch in self._gen_batches():
+                    for unique_account in self.injest(batch, source_id):
+                        self.unique_accounts += 1
+                        yield unique_account
 
             # call db.add_source for the second time to update counters
             # or delete the source if it didn't contain anything
@@ -64,6 +69,8 @@ class Injestor():
 
     @staticmethod
     def injest(batch, source_id):
+
+        log.debug('Injestor process started')
 
         try:
 
@@ -79,16 +86,13 @@ class Injestor():
 
 
 
-    def _gen_batches(self, batch_size=1000):
+    def _gen_batches(self, batch_size=5000):
         '''
         Yields lists of simple "Account" dicts of length <batch_size>
         '''
 
-        self.total_accounts = 0
-
         batch = []
         for account in self.source:
-            self.total_accounts += 1
             self.source.increment(account)
             batch.append(account)
 

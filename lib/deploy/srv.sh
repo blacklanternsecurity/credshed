@@ -35,7 +35,6 @@ start_daemon()
     if ! pgrep dockerd >/dev/null
     then
         printf '[+] Starting daemon\n'
-        printf '[+] MAKE SURE you have { "userns-remap": "default" } in /etc/docker/daemon.json\n'
         sleep 4
         sudo systemctl start docker
 
@@ -574,7 +573,7 @@ if [ -n "$do_start" ]
 then
     start_daemon
     start_containers
-    sleep 5
+    sleep 10
 fi
 
 if [ -n "$do_reset_db" ]

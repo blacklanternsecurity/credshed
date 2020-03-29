@@ -334,7 +334,7 @@ class DB():
                 },
                 '$set': {
                     'modified_date': datetime.now(),
-                    'import_finished': import_finished
+                    'import_finished': (import_finished or source_in_db['import_finished'])
                 },
                 '$max': {
                     'total_accounts': source.total_accounts,
@@ -521,7 +521,6 @@ class DB():
         '''
 
         tries_left = int(tries)
-        errors = []
 
         while tries_left:
 
@@ -536,12 +535,11 @@ class DB():
                 return upserted_accounts
 
             except pymongo.errors.PyMongoError as e:
+                log.error(f'Database error encountered: {e}')
                 tries_left -= 1
                 sleep(5)
-                errors.append(error_detail(e))
 
-        raise CredShedBatchError(f'Failed to add batch after {tries} tries ():\n' + "\n".join(errors))
-        return {'errors': errors}
+        log.critical(f'Failed to add batch after {tries} tries')
 
 
 
