@@ -1,4 +1,5 @@
 import logging
+import traceback
 from time import sleep
 import multiprocessing as mp
 from queue import Empty, Full
@@ -106,14 +107,11 @@ class ProcessPool:
         Executes given function and places return value in result queue
         '''
 
-        while 1:
-            try:
-                result_queue.put_nowait(func(*args, **kwargs))
-                break
-            except Full:
-                log.debug('Full')
-                sleep(.2)
-                continue
+        try:
+            result_queue.put(func(*args, **kwargs))
+        except Exception as e:
+            if type(e) not in [FileNotFoundError]:
+                log.critical(format_exc())
 
 
     @staticmethod
