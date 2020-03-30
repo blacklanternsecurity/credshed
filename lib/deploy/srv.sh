@@ -578,7 +578,6 @@ if [ -n "$do_start" ]
 then
     start_daemon
     start_containers
-    sleep 15
 fi
 
 if [ -n "$do_reset_db" ]
@@ -588,6 +587,8 @@ fi
 
 if [ -n "$do_init_shards" ]
 then
+    printf 'Sleeping for 60 seconds (a very long time is needed before the config server will respond\n')
+    sleep 60
     init_shards
 fi
 

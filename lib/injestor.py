@@ -30,8 +30,6 @@ class Injestor():
 
     def start(self, force=False):
 
-        self.unique_accounts = 0
-
         # call db.add_source for the first time to create it in the database
         source = self.db.add_source(self.source)
 
@@ -47,18 +45,18 @@ class Injestor():
 
                 with ProcessPool(self.threads, name=self.source.filename) as pool:
                     for unique_accounts in pool.map(self.injest, self._gen_batches(), args=(source_id,)):
-                        log.debug(f'{len(unique_accounts):,} unique accounts')
                         for unique_account in unique_accounts:
-                            self.unique_accounts += 1
+                            self.source.unique_accounts += 1
                             yield unique_account
 
             else:
                 # don't use multiprocessing if there's only 1 thread
                 for batch in self._gen_batches():
-                    for unique_account in self.injest(batch, source_id):
-                        self.unique_accounts += 1
+                    unique_accounts = self.injest(batch, source_id)
+                    for unique_account in unique_accounts:
+                        self.source.unique_accounts += 1
                         yield unique_account
-
+                    
             # call db.add_source for the second time to update counters
             # or delete the source if it didn't contain anything
             self.db.add_source(self.source, import_finished=True)
@@ -66,8 +64,6 @@ class Injestor():
 
     @staticmethod
     def injest(batch, source_id):
-
-        log.debug('Injestor process started')
 
         try:
 
@@ -99,8 +95,14 @@ class Injestor():
             batch.append(account)
 
             if batch and ((self.source.total_accounts) % batch_size == 0):
+                log.debug(f'Submitting batch of {len(batch):,}')
+                log.debug(f'{self.source.unique_accounts:,} unique accounts')
+                log.debug(f'{self.source.total_accounts:,} total accounts')
                 yield batch
                 batch = []
             
         if batch:
+            log.debug(f'Submitting batch of {len(batch):,}')
+            log.debug(f'{self.source.unique_accounts:,} unique accounts')
+            log.debug(f'{self.source.total_accounts:,} total accounts')
             yield batch

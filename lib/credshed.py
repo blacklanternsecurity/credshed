@@ -118,7 +118,6 @@ class CredShed():
             try:
                 injestor = Injestor(source, threads=threads)
                 for unique_account in injestor.start(force=force):
-                    source.unique_accounts += 1
                     if show and not stdout:
                         log.info(unique_account)
 
