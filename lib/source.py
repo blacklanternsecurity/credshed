@@ -2,10 +2,11 @@
 
 # by TheTechromancer
 
+from .util import *
 from .errors import *
 from .parser import *
-from .util import decode
 from pathlib import Path
+from .filestore import *
 from .config import config
 from datetime import datetime
 from .validation import word_regex
@@ -18,7 +19,7 @@ log = logging.getLogger('credshed.source')
 
 class Source():
     '''
-    Source = a source of data, typically a file.  One leak can have many sources
+    Source = a source of data, typically a file.  Deduplicated by file hash, so one source can have multiple files of the same hash
 
     1. Give it a filename:
         l = Source('dump.txt')
@@ -28,24 +29,6 @@ class Source():
         for account in l:
             print(account)
     '''
-
-    # fields which are allowed in the JSON document
-    doc_fields = [
-        'hash',
-        'name',
-        'filename',
-        'files',
-        'filesize',
-        'description',
-        'top_domains',
-        'top_password_basewords',
-        'top_misc_basewords',
-        'created_date',
-        'modified_date',
-        'total_accounts',
-        'unique_accounts',
-        'import_finished'
-    ]
 
 
     @classmethod
@@ -62,30 +45,27 @@ class Source():
             raise CredShedSourceError(f'Failed to create Source object from db: {e}')
 
 
-    def __init__(self, filename, name=None, filesize=None, deduplicate=False):
+    def __init__(self, file, name=None, filesize=None, deduplicate=False):
 
         # Not set unless retrieved from DB
         self.id = None
 
         # filename from which accounts are extracted
-        self.filename = Path(filename).resolve()
+        self.file = file
         if name is None:
-            self.name = str(self.filename)
+            self.name = str(self.file)
         else:
             self.name = name
-        # filesize in bytes
-        if filesize is None:
-            try:
-                self.filesize = filestore.size(filename)
-            except FilestoreUtilError as e:
-                log.error(e)
-                self.filesize = 0
+
+        if filesize is not None and self.file._size is None:
+            self.file._size = filesize
+
         # set used for account deduplication
-        self.accounts = set()
-        # keeps track of unique accounts during import
-        self.unique_accounts = 0
+        self._accounts = set()
         # keeps track of total accounts during import
         self.total_accounts = 0
+        # how many never-before-seen accounts have been imported (for runtime user feedback only, not stored)
+        self.unique_accounts = 0
         # whether or not to deduplicate accounts (collects accounts immediately into memory rather than lazily)
         self.deduplicate = deduplicate
         # description for source
@@ -100,64 +80,40 @@ class Source():
         self.misc_basewords = {}
 
 
-    def to_doc(self):
 
-        doc = dict()
-        for field in self.doc_fields:
-            if field in self.__dict__:
-                doc.update({field: self.__dict__[field]})
-        doc['id'] = self.id
-
-        return doc
-
-
-
-    def parse(self, unattended=True):
+    def parse(self, unattended=True, force_ascii=True):
 
         if unattended:
             self.description = f'Unattended import at {datetime.now().isoformat(timespec="milliseconds")}'
         else:
             self.description = f'Manual import at {datetime.now().isoformat(timespec="milliseconds")}'
 
-        try:
-            accounts = TextParse(self.filename, unattended=unattended)
-        except TextParseError as e:
-            log.warning(f'{self.filename} falling back to non-strict mode')
-            accounts = TextParse(self.filename, unattended=unattended, strict=False)
+        accounts = TextParse(self.file, unattended=unattended, strict=False, force_ascii=force_ascii)
 
         if self.deduplicate:
             for account in accounts:
-                self.accounts.add(account)
+                self._accounts.add(account)
         else:
-            self.accounts = accounts
+            self._accounts = accounts
 
 
     @property
     def hash(self):
 
         if self._hash is None:
-            self._hash = hash_file(self.filename)
+            self._hash = self.file.hash()
         return self._hash
-
-
-    def update(self, d):
-
-        self.id = d.pop('_id')
-        for k,v in d.items():
-            if k in self.doc_fields:
-                self.__dict__.update({k:v})
 
 
     def increment(self, account):
 
         self.total_accounts += 1
 
-        _, domain = account.split_email
-        if domain:
+        if account.domain:
             try:
-                self.domains[domain] += 1
+                self.domains[account.domain] += 1
             except KeyError:
-                self.domains[domain] = 1
+                self.domains[account.domain] = 1
 
         if account.password:
             for word in word_regex.findall(account.password):
@@ -179,24 +135,25 @@ class Source():
     def top_domains(self, limit=10):
 
         sorted_domains = dict(sorted(self.domains.items(), key=lambda x: x[1], reverse=True)[:limit])
-        return {decode(d): c for d,c in sorted_domains.items()}
+        return {d: c for d,c in sorted_domains.items()}
 
 
     def top_password_basewords(self, limit=10):
 
         sorted_words = dict(sorted(self.password_basewords.items(), key=lambda x: x[1], reverse=True)[:limit])
-        return {decode(w): c for w,c in sorted_words.items()}
+        return {w: c for w,c in sorted_words.items()}
 
 
     def top_misc_basewords(self, limit=10):
 
         sorted_words = dict(sorted(self.misc_basewords.items(), key=lambda x: x[1], reverse=True)[:limit])
-        return {decode(w): c for w,c in sorted_words.items()}
+        return {w: c for w,c in sorted_words.items()}
 
 
     def __iter__(self):
 
-        for account in self.accounts:
+        for account in self._accounts:
+            self.increment(account)
             yield account
 
 
@@ -204,9 +161,9 @@ class Source():
 
         try:
             store_dir = config['FILESTORE']['store_dir']
-            filename = self.filename.relative_to(store_dir)
+            filename = self.file.relative_to(store_dir)
         except (KeyError, ValueError):
-            filename = self.filename
+            filename = self.file
 
         return f'{filename} (total accounts: {len(self):,})'
 
@@ -214,7 +171,7 @@ class Source():
     def __len__(self):
 
         try:
-            length = len(self.accounts)
+            length = len(self._accounts)
         except TypeError:
             length = 0
 

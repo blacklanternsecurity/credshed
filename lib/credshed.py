@@ -2,14 +2,11 @@
 
 # by TheTechromancer
 
-import sys
 import logging
 from .db import DB
 from .errors import *
 from .source import *
-import pymongo.errors
 from time import sleep
-from .injestor import Injestor
 
 
 # set up logging
@@ -28,16 +25,7 @@ class CredShed():
 
     def __init__(self):
 
-        try:
-            self.db = DB()
-        except pymongo.errors.PyMongoError as e:
-            raise CredShedDatabaseError(f'Failed to connect to database: {e}')
-
-        if not self.db.meta_client:
-            log.warning('Continuing without metadata support')
-
-        self.STOP = False
-
+        self.db = DB()
 
 
     def search(self, query, query_type='email', limit=0):
@@ -51,16 +39,19 @@ class CredShed():
             yield account
 
 
-
     def count(self, query, query_type='email'):
 
         return self.db.count(query, query_type)
 
 
-
     def db_stats(self):
 
         return self.db.stats(accounts=True, sources=True, db=True)
+
+
+    def drop(self):
+
+        self.db.drop()
 
 
     def query_stats(self, query, query_type='domain', limit=10):
@@ -84,15 +75,12 @@ class CredShed():
 
 
 
-    @staticmethod
-    def import_file(filename, strict=False, unattended=True, threads=2, show=False, force=False, stdout=False):
+    def import_file(self, filename, unattended=True, force=False, stdout=False, force_ascii=False):
         '''
         Takes a filename as input
-        Returns a two-tuple: (unique_accounts, total_accounts)
+        Returns a Source() object containing stats such as total accounts
 
-        show = whether or not to print unique accounts
-
-        Source(filename) --> Source.parse() --> Injestor(source)
+        Source(filename) --> Source.parse() --> db.add_accounts(source)
         '''
 
         log.info(f'Parsing file {filename}')
@@ -101,25 +89,23 @@ class CredShed():
 
         source = Source(filename)
         # make sure the file is readable
-        try:
-            source.hash
-        except FilestoreHashError:
-            log.error(f'Failure reading {filename}')
-            return (0, 0)
+        if unattended and not stdout:
+            try:
+                source.hash
+            except FilestoreHashError:
+                log.error(f'Failure reading {filename}')
+                return (0, 0)
 
-        source.parse(unattended=unattended)
+        source.parse(unattended=unattended, force_ascii=force_ascii)
 
         if stdout:
             for account in source:
-                sys.stdout.buffer.write(account.bytes + b'\n')
+                print(str(account))
 
         else:
 
             try:
-                injestor = Injestor(source, threads=threads)
-                for unique_account in injestor.start(force=force):
-                    if show and not stdout:
-                        log.info(unique_account)
+                self.db.add_accounts(source, force=force)
 
             except KeyboardInterrupt:
                 if unattended:
@@ -148,8 +134,5 @@ class CredShed():
                 int((time_elapsed % 3600) // 60),
                 int(time_elapsed % 60)
             ))
-
-        else:
-            log.warning(f'No accounts found in {filename}')
 
         return (source.unique_accounts, source.total_accounts)

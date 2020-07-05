@@ -2,154 +2,496 @@
 
 # by TheTechromancer
 
-import hashlib
+import re
 import logging
-import pymongo
 from .util import *
+from . import logger
 from .errors import *
 from .source import *
 from .account import *
-from time import sleep
 from . import validation
 from .config import config
 from datetime import datetime
+from multiprocessing import Manager
+
+import elasticsearch
+from elasticsearch import helpers
 
 
 # set up logging
 log = logging.getLogger('credshed.db')
 
 
+source_lock = Manager().Semaphore()
+
+
 class DB():
+
+    account_mappings = {
+        'properties': {
+            # username
+            'u': {
+                'type': 'keyword',
+                'ignore_above': Account.max_length_1,
+                'index': False,
+                'norms': False,
+            },
+            # email (left of "@" only, domain is in "_id" field)
+            'e': {
+                'type': 'keyword',
+                'ignore_above': Account.max_length_1,
+                'index': True,
+                'norms': False,
+            },
+            # domain (stored reversed for better searching)
+            'd': {
+                'type': 'keyword',
+                'ignore_above': Account.max_length_1,
+                'index': True,
+                'norms': False
+            },
+            # password
+            'p': {
+                'type': 'keyword',
+                'ignore_above': Account.max_length_1,
+                'index': False,
+                'norms': False,
+            },
+            # hashes (array)
+            'h': {
+                'type': 'keyword',
+                'ignore_above': Account.max_length_2,
+                'index': False,
+                'norms': False,
+            },
+            # misc / description
+            'm': {
+                'type': 'text',
+                'index': False,
+                'norms': False,
+            },
+            # sources (array of source IDs)
+            's': {
+                'type': 'long',
+                'index': False,
+            }
+        }
+    }
+
+    source_mappings = {
+        'properties': {
+            'top_domains': {
+                'type': 'flattened',
+            },
+            'top_misc_basewords': {
+                'type': 'flattened',
+            },
+            'top_password_basewords': {
+                'type': 'flattened',
+            },
+        }
+    }
+
+    elastic_scripts = [
+        # AddToSet() (account.s)
+        {
+            'id': 'a',
+            'script': {
+                'source': 'if ( ! ctx._source.s.contains(params.s) ) { ctx._source.s.add(params.s) }',
+                'lang': 'painless',
+            }
+        },
+        # Update Source Filenames
+        {
+            'id': 'UpdateSourceFilenames',
+            'script': {
+                'source': 'if ( ! ctx._source.files.contains(params.filename) ) { ctx._source.files.add(params.filename) }',
+                'lang': 'painless',
+            },
+        },
+        # Update Source Counters
+        {
+            'id': 'UpdateSourceCounters',
+            'script': {
+                'source': 'if ( ctx._source.total_accounts < params.total_accounts ) { ctx._source.total_accounts = params.total_accounts }',
+                'lang': 'painless',
+            }
+        }
+    ]
+
 
     def __init__(self):
 
-        # set up main database (for accounts)
-        try:
-            self.main_client = self._get_main_client()
-            self.main_db = self.main_client[self.main_db_name]
-            self.accounts = self.main_db.accounts
-        except CredShedError as e:
-            self.main_client = None
-            log.error(f'Error setting up main database: {e}')
-
-        # set up meta database (for account metadata)
-        try:
-            self.meta_client = self._get_meta_client()
-            self.meta_db = self.meta_client[self.meta_db_name]
-            self.accounts_metadata = self.meta_db.accounts_metadata
-        except CredShedError as e:
-            self.meta_client = None
-            log.error(f'Error setting up meta database: {e}')
-
-        if not (self.main_client or self.meta_client):
-            raise CredShedDatabaseError('Failed to contact both main and metadata databases')
-
-        # sources
-        self.sources = self.main_db.sources
-
-        # create indexes
-        self.sources.create_index([('hash', pymongo.ASCENDING)], background=True)
-        #self.accounts.create_index([('u', pymongo.ASCENDING)], sparse=True, background=True)
-        #self.accounts.create_index([('e', pymongo.ASCENDING)], sparse=True, background=True)
+        self._elastic = None
+        self._index = None
 
 
 
-    def find_one(self, _id):
+    @property
+    def elastic(self):
+
+        if self._elastic is None:
+
+            self._elastic = elasticsearch.Elasticsearch(
+                timeout=30,
+                max_retries=10,
+                retry_on_timeout=True,
+                http_auth=(
+                    config['CREDSHED']['username'],
+                    config['CREDSHED']['password']
+                )
+            )
+
+            # create indexes (similar to tables)
+            try:
+                self._op(
+                    self.elastic.indices.create, 
+                    'accounts',
+                    {
+                        'settings' : {
+                            'index' : {
+                                'number_of_shards': int(config['CREDSHED']['shards'])
+                            }
+                        }
+                    }
+                )
+            except elasticsearch.exceptions.ElasticsearchException as e:
+                log.debug(str(e))
+
+            try:
+                self._op(self.elastic.indices.create, 'sources')
+            except elasticsearch.exceptions.ElasticsearchException as e:
+                log.debug(str(e))
+
+
+            # set up account mappings
+            try:
+                self._op(self.index.put_mapping, index='accounts', body=self.account_mappings)
+            except elasticsearch.exceptions.RequestError as e:
+                log.error('Error setting Elasticsearch account mappings')
+                log_error(e)
+
+            # set up source mappings
+            try:
+                self._op(self.index.put_mapping, index='sources', body=self.source_mappings)
+            except elasticsearch.exceptions.RequestError as e:
+                log.error('Error setting Elasticsearch source mappings')
+                log_error(e)
+
+            # create an "AddToSet" script for importing accounts
+            for script in self.elastic_scripts:
+                self._op(self.elastic.put_script, id=script.pop('id'), body=script)
+            return self._elastic
+
+        else:
+            return self._elastic
+
+
+    def drop(self):
         '''
-        retrieves one account by id
+        Deletes all data from the database
+        '''
+        log.info('Deleting "sources" index"')
+        self.index.delete(index='sources')
+        log.info('Done')
+        log.info('Deleting "accounts" index"')
+        self.index.delete(index='accounts')
+        log.info('Done')
+
+
+    @property
+    def index(self):
+
+        if self._index is None:
+            self._index = elasticsearch.client.IndicesClient(self.elastic)
+        return self._index
+
+
+    def account_stream(self, source, source_id, first_account=None):
+
+        if first_account is not None:
+            yield self._prep_account(first_account, source_id)
+
+        for account in source:
+            yield self._prep_account(account, source_id)
+
+
+
+    @staticmethod
+    def _prep_account(account, source_id):
+        '''
+        Formats an Account object for elastic
+        '''
+        doc = account.document
+        doc['s'] = [source_id]
+        doc_id = doc.pop('_id')
+        return {
+            '_op_type': 'update',
+            '_id': doc_id,
+            '_source': {
+                "script" : {
+                    "id": 'a',
+                    "params" : {
+                        "s" : source_id
+                    }
+                },
+                "upsert": doc
+            }
+        }
+
+
+
+    def add_accounts(self, source, chunk_size=15000, force=False):
+        '''
+        Given a Source object, import into the database along with all of its accounts
+
+        chunk size benchmarks (accounts per minute):
+            100 - 95,849
+            200 - 173,519
+            400 - 271,585
+            1000 - 440,616
+            2000 - 556,964
+            4000 - 643,782
+            10000 - 713,762
+            15000 - 808,106
+            20000 - 687,839
         '''
 
         try:
-            return Account.from_document(self.accounts.find({'_id': _id}).next())
-        except (pymongo.errors.PyMongoError, StopIteration) as e:
-            raise CredShedDatabaseError(error_detail(e))
+
+            # check to make sure there's at least one account
+            try:
+                first_account = next(source.__iter__())
+            except StopIteration:
+                log.warning(f'No accounts found in {source.file}')
+                return
+
+            # create the source and get the source ID
+            new_source = self.add_source(source, import_finished=False, force=force)
+            log.debug(f'New source: {str(new_source)}')
+
+            account_stream = self.account_stream(source, new_source['source_id'], first_account=first_account)
+
+            start_time = None
+
+            if new_source['import_finished'] == False or force:
+
+                while 1:
+                    try:
+
+                        bulk_results = elasticsearch.helpers.streaming_bulk(
+                            #bulk_results = elasticsearch.helpers.parallel_bulk(
+                            client=self.elastic,
+                            #thread_count=2,
+                            chunk_size=chunk_size,
+                            max_retries=10,
+                            raise_on_error=False,
+                            raise_on_exception=False,
+                            initial_backoff=2,
+                            max_backoff=1024,
+                            index='accounts',
+                            actions=account_stream
+                        )
+
+                        for i, res in enumerate(bulk_results):
+
+                            try:
+                                if res[-1]['update']['result'] == 'created':
+                                    source.unique_accounts += 1
+                            except (KeyError, IndexError) as e:
+                                pass
+                                #log.debug(f'Invalid update result: {str(res)}')
+
+                            if i % 100000 == 0:
+                                log.debug(res)
+                                if start_time is not None:
+                                    time_elapsed = (datetime.now() - start_time)
+                                    accounts_per_minute = int(100000 / time_elapsed.total_seconds() * 60)
+                                    log.info(f'Import running at {accounts_per_minute:,} accounts per minute for {source.file}')
+                                start_time = datetime.now()
+
+                        break
+
+                    except (
+                            KeyError,
+                            elasticsearch.exceptions.ConflictError,
+                            elasticsearch.exceptions.SerializationError
+                        ) as e:
+                        # heaven only knows why this stuff happens
+                        '''
+                        KeyError:
+
+                        Traceback (most recent call last):
+                          File "/opt/credshed/credshed.elastic/lib/db.py", line 273, in add_accounts
+                            for i, res in enumerate(bulk_results):
+                          File "/home/credshed/.local/lib/python3.8/site-packages/elasticsearch/helpers/actions.py", line 231, in streaming_bulk
+                            for data, (ok, info) in zip(
+                          File "/home/credshed/.local/lib/python3.8/site-packages/elasticsearch/helpers/actions.py", line 153, in _process_bulk_chunk
+                            bulk_data, map(methodcaller("popitem"), resp["items"])
+                        KeyError: 'items'
+                        '''
+
+                        '''
+                        Traceback (most recent call last):
+                          File "/home/credshed/.local/lib/python3.8/site-packages/elasticsearch/serializer.py", line 93, in loads
+                        return json.loads(s)
+                          File "/usr/lib/python3.8/json/__init__.py", line 357, in loads
+                        return _default_decoder.decode(s)
+                          File "/usr/lib/python3.8/json/decoder.py", line 337, in decode
+                        obj, end = self.raw_decode(s, idx=_w(s, 0).end())
+                          File "/usr/lib/python3.8/json/decoder.py", line 353, in raw_decode
+                        obj, end = self.scan_once(s, idx)
+                        json.decoder.JSONDecodeError: Expecting ':' delimiter: line 1 column 5797 (char 5796)
+
+                        During handling of the above exception, another exception occurred:
+
+                        Traceback (most recent call last):
+                          File "/opt/credshed/credshed.elastic/lib/db.py", line 278, in add_accounts
+                        for i, res in enumerate(bulk_results):
+                          File "/home/credshed/.local/lib/python3.8/site-packages/elasticsearch/helpers/actions.py", line 231, in streaming_bulk
+                        for data, (ok, info) in zip(
+                          File "/home/credshed/.local/lib/python3.8/site-packages/elasticsearch/helpers/actions.py", line 122, in _process_bulk_chunk
+                        resp = client.bulk("\n".join(bulk_actions) + "\n", *args, **kwargs)
+                          File "/home/credshed/.local/lib/python3.8/site-packages/elasticsearch/client/utils.py", line 92, in _wrapped
+                        return func(*args, params=params, headers=headers, **kwargs)
+                          File "/home/credshed/.local/lib/python3.8/site-packages/elasticsearch/client/__init__.py", line 457, in bulk
+                        return self.transport.perform_request(
+                          File "/home/credshed/.local/lib/python3.8/site-packages/elasticsearch/transport.py", line 394, in perform_request
+                        data = self.deserializer.loads(
+                          File "/home/credshed/.local/lib/python3.8/site-packages/elasticsearch/serializer.py", line 139, in loads
+                        return deserializer.loads(s)
+                          File "/home/credshed/.local/lib/python3.8/site-packages/elasticsearch/serializer.py", line 95, in loads
+                        raise SerializationError(s, e)
+                        '''
+                        log.error(f'Encountered error during bulk import, continuing')
+                        log_error(e)
+                        continue
+
+            else:
+                log.warning(f'Skipping {source.file.name}, already in database')
+
+            # update counters, stats, etc.
+            self.add_source(source, import_finished=True, force=force)
+
+        except elasticsearch.exceptions.ElasticsearchException as e:
+            log_error(e)
+            import traceback
+            log.error(traceback.format_exc())
+            raise CredShedDatabaseError(e)
 
 
 
-
-    def search(self, keyword, query_type='email', limit=10000):
+    def search(self, keyword, query_type='email', limit=10000, time_limit='30m'):
         '''
-        searches by keyword using regex
-        ~ 2 minutes to regex-search non-indexed 100M-entry DB
+        Returns query stats and results in the form of a generator:
+        (query_stats, <account_generator>)
         '''
 
-        try:
+        if limit == -1:
+            limit = 10000
 
-            query = self._build_query(keyword, query_type)
+        query = self._build_query(keyword, query_type=query_type, limit=limit)
 
-            for result in self.accounts.find(query).limit(limit):
-                try:
-                    account = Account.from_document(result)
-                    yield account
-                except AccountCreationError as e:
-                    log.warning(str(e))
-
-        except pymongo.errors.PyMongoError as e:
-            raise CredShedDatabaseError(error_detail(e))
+        for account in self._scan_accounts(
+            index='accounts',
+            time_limit=time_limit,
+            query=query
+        ):
+            yield account
 
 
+    def _op(self, func, *args, **kwargs):
+        '''
+        Attempt elastic operation and catch the elusive 409 error
+        '''
+        index = kwargs.get('index', '_all')
+        tries = kwargs.pop('tries', 10)
+        error = None
+
+        for attempt in range(tries):
+            try:
+
+                return func(*args, **kwargs)
+
+            except (KeyError, elasticsearch.exceptions.ConflictError) as e:
+                # thanks obama
+                '''
+                Traceback (most recent call last):
+                  File "/opt/credshed/credshed.elastic/lib/db.py", line 273, in add_accounts
+                    for i, res in enumerate(bulk_results):
+                  File "/home/credshed/.local/lib/python3.8/site-packages/elasticsearch/helpers/actions.py", line 231, in streaming_bulk
+                    for data, (ok, info) in zip(
+                  File "/home/credshed/.local/lib/python3.8/site-packages/elasticsearch/helpers/actions.py", line 153, in _process_bulk_chunk
+                    bulk_data, map(methodcaller("popitem"), resp["items"])
+                KeyError: 'items'
+                '''
+                log.error('Encountered error in _op')
+                log.critical(str(e))
+                self.index.refresh(index=index)
+                if attempt+1 >= tries:
+                    raise CredShedDatabaseError(e)
+                else:
+                    log.error('Retrying...')
+                    continue
+
+
+    def _scan_accounts(self, index, query, time_limit):
+
+        for result in elasticsearch.helpers.scan(
+            client=self.elastic,
+            index=index,
+            scroll=time_limit,
+            query=query
+        ):
+            yield Account.from_document(result['_source'])
 
 
     def count(self, keyword, query_type='email'):
+        '''
+        Return number of entries matched by query
+        '''
 
-        try:
+        return self.query_stats(keyword, query_type=query_type)['hits']['total']['value']
 
-            query = self._build_query(keyword, query_type)
-            return self.accounts.count_documents(query)
 
-        except pymongo.errors.PyMongoError as e:
-            raise CredShedDatabaseError(error_detail(e))
+    def index_size(self, index='accounts'):
 
+        return self._op(
+            self.elastic.count,
+            index=index,
+        )['count']
 
 
     def query_stats(self, keyword, query_type='domain'):
 
-        if self.meta_client:
-
-            try:
-
-                # {source_id: num_accounts}
-                sources = dict()
-
-                query = self._build_query(keyword, query_type)
-                for result in self.accounts_metadata.find(query, {'s': True, '_id': False}):
-
-                    try:
-                        for source_id in result['s']:
-                            try:
-                                sources[source_id] += 1
-                            except KeyError:
-                                sources[source_id] = 1
-
-                    except KeyError:
-                        log.error('"s" key missing from account metadata')
-
-                return sources
-
-            except pymongo.errors.PyMongoError as e:
-                raise CredShedDatabaseError(error_detail(e))
-
-        else:
-            raise CredShedMetadataError('No metadata available, check database config')
+        query = self._build_query(keyword, limit=0, query_type=query_type)
+        result = self.elastic.search(
+            index='accounts',
+            body=query,
+        )
+        return result
 
 
-
-
-    def _build_query(self, keyword, query_type='email'):
-
+    def _build_query(self, keyword, limit, query_type='email'):
 
         query_type = validation.validate_query_type(keyword, query_type)
 
         if query_type == 'email':
             try:
-                email, domain = keyword.lower().split('@')[:2]
-                # _id begins with reversed domain
-                domain_chunk = re.escape(domain[::-1])
-                email_hash = decode(base64.b64encode(hashlib.sha256(encode(email)).digest()[:6]))
-                query_str = domain_chunk + '\\|' +  re.escape(email_hash)
-
-                query_regex = rf'^{query_str}.*'
-                query = {'_id': {'$regex': query_regex}}
+                email, domain = keyword.lower().split('@', 1)
+                domain = re.escape(domain[::-1])
+                query = {
+                    'size': limit,
+                    'query': {
+                        'bool': {
+                            'must': [
+                                { 'regexp': { 'd': rf'{domain}(\.[\w]+[\w\.]+)*'} },
+                                # (\.[\w]+[\w\.]+)*
+                                { 'term': { 'e': email } }
+                            ]
+                        }
+                    }
+                }
 
             except ValueError:
                 raise CredShedError('Invalid email')
@@ -160,65 +502,42 @@ class DB():
 
             if domain.endswith('.'):
                 # if query is like ".com"
-                query_regex = rf'^{domain}[\w.]*\|'
+                query_regex = rf'{domain}[a-z0-9-_\.]+'
             else:
                 # or if query is like "example.com"
-                query_regex = rf'^{domain}[\.\|]'
+                query_regex = rf'{domain}(\.[\w]+[\w\.]+)*'
 
             num_sections = len(domain.split('.'))
-            query = {'_id': {'$regex': query_regex}}
+            query = {
+                'size': limit,
+                'query': {
+                    'bool': {
+                        'must': [
+                            { 'regexp': { 'd': query_regex} }
+                        ]
+                    }
+                }
+            }
 
         elif query_type == 'username':
-            query_regex = rf'^{re.escape(keyword)}$'
-            query = {'u': {'$regex': query_regex}}
+            query = {
+                'size': limit,
+                'query': {
+                    'term': { 'u': query_regex}
+                }
+            }
 
         else:
             raise CredShedError(f'Invalid query type: {query_type}')
 
-        log.debug(f'Raw mongo query: {query}')
+        log.debug(f'Result of _build_query: {query}')
+
         return query
-            
-
-
-    def fetch_account_metadata(self, account):
-
-        if not self.meta_client:
-            raise CredShedMetadataError('No metadata available, check database config')
-
-        sources = []
-
-        try:
-
-            _id = ''
-            if type(account) == str:
-                _id = account
-            elif type(account) == Account:
-                _id = account._id
-            else:
-                raise TypeError
-
-            source_ids = self.accounts_metadata.find_one({'_id': _id})['s']
-
-            for source_id in source_ids:
-                try:
-                    sources.append(self.get_source(source_id))
-                except CredShedDatabaseError:
-                    log.warning(f'No database entry found for source ID {source_id}')
-                    continue
-
-        except KeyError as e:
-            raise CredShedError(f'Error retrieving source IDs from account "{_id}": {e}')
-        except TypeError as e:
-            pass
-            #log.debug('No source IDs found for account ID "{}": {}'.format(str(_id), str(e)))
-
-        account_metadata = AccountMetadata(sources)
-        return account_metadata
 
 
 
 
-    def delete_leak(self, source_id, batch_size=10000):
+    def delete_leak(self, source_id, batch_size=5000):
 
         if not self.meta_client:
             raise CredShedMetadataError('Removing leaks requires access to metadata. No metadata database is currently attached.')
@@ -263,7 +582,7 @@ class DB():
             return accounts_deleted
 
 
-    def add_source(self, source, import_finished=False):
+    def add_source(self, source, import_finished=False, force=False):
         '''
         Inserts source details such as name, description, hash, etc.
         Returns new or existing Leak ID
@@ -274,186 +593,159 @@ class DB():
 
         Meant to be called twice:
             - Once before a source is imported in order to get the Source ID
-            - Again after a source is imported to update file list and unique account counters
+            - Again after a source is imported to update file list and account counters
         '''
-        # {'name': '/etc/ufw/after6.rules.20180722_211440', 'filename': PosixPath('/etc/ufw/after6.rules.20180722_211440'), 'filesize': 915,
-        # 'description': 'Unattended import at 2020-03-22T12:12:09.872', 'total_accounts': 0, 'unique_accounts': 0, 'id': None}
 
-        try:
-            # see if it already exists - try to find by hash
-            source_in_db = self.sources.find_one({'hash': source.hash})
-        except pymongo.errors.PyMongoError as e:
-            raise CredShedDatabaseError(error_detail(e))
+        # perform costly operations outside of file lock
+        source.hash
+        source.file.size
 
-        # if it doesn't exist, create it
-        if source_in_db is None:
-            log.debug(f'{source.filename} not yet in DB, adding...')
-
-            id_counter = self._make_source_id()
-
-            source_doc = {
-                'name': str(source.filename),
-                'filename': str(source.filename),
-                'hash': source.hash,
-                'files': [str(source.filename)],
-                'filesize': source.filesize,
-                'description': source.description,
-                'top_domains': source.top_domains(100),
-                'top_misc_basewords': source.top_misc_basewords(100),
-                'top_password_basewords': source.top_password_basewords(100),
-                'created_date': datetime.now(),
-                'modified_date': datetime.now(),
-                'total_accounts': source.total_accounts,
-                'unique_accounts': source.unique_accounts,
-                'import_finished': import_finished
-            }
+        with source_lock:
 
             while 1:
-                try:
-                    source_doc['_id'] = id_counter
-                    self.sources.insert_one(source_doc)                       
-                    break
 
-                except pymongo.errors.DuplicateKeyError:
-                    id_counter += 1
-                    continue
+                source.id = self.highest_source_id() + 1
 
-                except pymongo.errors.PyMongoError as e:
-                    raise CredShedDatabaseError(error_detail(e))
-                    break
-
-            return source_doc
-
-        # otherwise, update it
-        else:
-            log.debug(f'Matching hash for {source.filename} aready exists, updating...')
-
-            self.sources.update_one({'hash': source.hash}, {
-                '$addToSet': {
-                    'files': str(source.filename)
-                },
-                '$set': {
+                source_doc = {
+                    'name': str(source.file),
+                    'source_id': source.id,
+                    'filename': str(source.file),
+                    'files': [str(source.file)],
+                    'filesize': source.file.size,
+                    'description': source.description,
+                    'top_domains': source.top_domains(100),
+                    'top_misc_basewords': source.top_misc_basewords(100),
+                    'top_password_basewords': source.top_password_basewords(100),
+                    'created_date': datetime.now(),
                     'modified_date': datetime.now(),
-                    'import_finished': (import_finished or source_in_db['import_finished'])
-                },
-                '$max': {
                     'total_accounts': source.total_accounts,
-                },
-                '$inc': {
-                    'unique_accounts': source.unique_accounts
+                    'import_finished': import_finished
                 }
 
-            })
+                # make sure it doesn't already exist
+                try:
+                    existing_source = self.elastic.search(index='sources', body={
+                        "query": {
+                            "term": {
+                                '_id': source.hash
+                            }
+                        }
+                    })['hits']['hits'][0]['_source']
 
-            # only update these if import finished successfully
-            # this prevents messing up existing data when cancelling an import operation
-            if import_finished:
+                except (IndexError, KeyError) as e:
+                    log.debug(f'{source.file} not yet in DB')
+                    
+                    # create the source
+                    res = self._op(
+                        self.elastic.create,
+                        index='sources',
+                        id=source.hash,
+                        body=source_doc,
+                        refresh=True,
+                    )
 
-                # if the import finished and there still aren't any accounts
-                if source.total_accounts == 0:
-                    log.info(f'Import finished but no accounts found; deleting source {source.filename}')
-                    # delete it
-                    self.sources.delete_one({'hash': source.hash})
+                    log.debug(f'source creation result: {str(res)}')
+
+                    return source_doc
+
+
+                log.debug(f'Matching hash already exists for {source.file}, updating...')
+                log.debug(f'existing_source: {str(existing_source)}')
+
+                # add filename
+                res = self._op(
+                    self.elastic.update,
+                    index='sources',
+                    id=source.hash,
+                    body={
+                        'script' : {
+                            'id': 'UpdateSourceFilenames',
+                            'params' : {
+                                'filename': str(source.file),
+                            }
+                        }
+                    }
+                )
+
+                # if the import hasn't already finished, or if we're forcing it
+                if existing_source['import_finished'] == False or force:
+
+                    # if an import finished at any point in time, we need to make sure this is True
+                    source_doc['import_finished'] = (import_finished or existing_source['import_finished']) 
+
+                    # add filename and update total accounts
+                    # note: only updates value if it's larger than the existing one
+                    res = self._op(
+                        self.elastic.update,
+                        index='sources',
+                        id=source.hash,
+                        body={
+                            'script' : {
+                                'id': 'UpdateSourceCounters',
+                                'params' : {
+                                    'total_accounts': source.total_accounts,
+                                }
+                            }
+                        }
+                    )
+
+                    log.debug(f'Updated source filenames & counters: {str(res)}')
+
+                    # update modified date and set import status
+                    res = self._op(
+                        self.elastic.update,
+                        index='sources',
+                        id=source.hash,
+                        body={
+                            'doc': {
+                                'modified_date': datetime.now(),
+                                'import_finished': (import_finished or existing_source['import_finished']),
+
+                            }
+                        }
+                    )
+
+                    log.debug(f'Updated source modified date and import status: {str(res)}')
+
+                    # only update these if import finished successfully
+                    # this prevents messing up existing data when cancelling an import operation
+                    if import_finished:
+
+                        # delete the source if the import finished and there still aren't any accounts
+                        if source.total_accounts == 0:
+                            log.info(f'Import finished but no accounts found; deleting source {source.file}')
+                            res = self._op(
+                                self.elastic.delete,
+                                index='sources', id=source.hash
+                            )
+                            log.debug(f'Source deletion result: {str(res)}')
+
+                        else:
+
+                            log.debug('Updating source now that import has finished')
+
+                            res = self._op(
+                                self.elastic.update,
+                                index='sources',
+                                id=source.hash,
+                                body={
+                                    'doc': {
+                                        'total_accounts': source.total_accounts,
+                                        'top_domains': source.top_domains(100),
+                                        'top_misc_basewords': source.top_misc_basewords(100),
+                                        'top_password_basewords': source.top_password_basewords(100),
+                                    }
+                                }
+                            )
+
+                            log.debug(f'source update result (import finished): {str(res)}')
 
                 else:
-                    self.sources.update_one({'hash': source.hash}, {
-                        '$set': {
-                            'top_domains': source.top_domains(100),
-                            'top_misc_basewords': source.top_misc_basewords(100),
-                            'top_password_basewords': source.top_password_basewords(100),
-                        }
-                    })
+                    log.warning(f'Import already finished for {source.file}, skipping')
 
-            # refresh data
-            refreshed_source = self.sources.find_one({'hash': source.hash})
-
-            if refreshed_source is None:
-                # if this happens, another thread deleted the source, probably because it's empty
-                return source_in_db
-            else:
-                return refreshed_source
-
-
-
-
-    def _make_source_id(self):
-
-        # get the highest source._id
-        id_counter = self.highest_source_id()
-
-        # make double-sure it doesn't exist yet
-        while 1:
-            try:
-                id_counter += 1
-                result = self.sources.find_one({'_id': id_counter})
-                if not result:
-                    return id_counter
-            except pymongo.errors.PyMongoError as e:
-                raise CredShedDatabaseError(error_detail(e))
-                continue
-
-
-
-
-    def stats(self, accounts=False, sources=True, db=False):
-        '''
-        prints database statistics
-        returns most recently added source ID, if applicable
-        '''
-
-        highest_source_id = 0
-        stats = []
-
-        try:
-
-            if accounts:
-                accounts_stats = self.main_db.command('collstats', 'accounts', scale=1048576)
-                stats.append('[+] Account Stats (MB):')
-                for k, v in accounts_stats.items():
-                    if k not in ['wiredTiger', 'indexDetails', 'shards', 'raw']:
-                        stats.append(f'\t{k}: {v}')
-            stats.append('')
-
-            if sources:
-
-                all_sources = self.sources.find({})
-
-                if all_sources:
-                    stats.append('[+] Leaks in DB:')
-
-                    for s in all_sources:
-                        try:
-                            if s['total_accounts'] > 0:
-                                num_files = len(s['files'])
-                                source_str = '{}: {} ({:,} accounts, {}, {})'.format(
-                                    s['_id'],
-                                    s['name'],
-                                    s['total_accounts'],
-                                    f'{num_files:,} ' + ('files' if num_files > 1 else 'file'),
-                                    bytes_to_human(s['filesize'])
-                                )
-                                stats.append(source_str)
-
-                        except KeyError as e:
-                            log.error(f'Missing key "{e}" in source ID {s["_id"]}')
-
-                    stats.append('')
-
-        except pymongo.errors.OperationFailure:
-            stats.append('[!] No accounts added yet\n')
-
-        except pymongo.errors.PyMongoError as e:
-            log.error(error_detail(e))
-
-        if db:
-            db_stats = self.main_db.command('dbstats', scale=1048576)
-            stats.append('[+] DB Stats (MB):')
-            for k in db_stats:
-                if k not in ['raw']:
-                    stats.append('\t{}: {}'.format(k, db_stats[k]))
-
-        return '\n'.join(stats)
-
+                # force refresh on source index
+                self.index.refresh(index='sources')
+                return existing_source
 
 
     def highest_source_id(self):
@@ -462,27 +754,24 @@ class DB():
         or 1 if there are no leaks loaded
         '''
 
-        # get the highest source._id
-        try:
-            id_counter = next(self.sources.find({}, {'_id': 1}, sort=[('_id', -1)], limit=1))['_id']
-        except StopIteration:
-            id_counter = 1
-
-        return max(1, id_counter)
-
-
-
-    def account_count(self):
+        log.debug(f'Getting highest source ID')
 
         try:
-            collstats = self.main_db.command('collstats', 'accounts', scale=1048576)
-            num_accounts_in_db = collstats['count']
-        except KeyError:
-            num_accounts_in_db = 0
-        except pymongo.errors.PyMongoError as e:
-            raise CredShedDatabaseError(error_detail(e))
+            res = int(self._op(
+                self.elastic.search,
+                index='sources',
+                size=1,
+                sort=[
+                    'source_id:desc'
+                ]
+            )['hits']['hits'][0]['_source']['source_id'])
 
-        return int(num_accounts_in_db)
+        except (elasticsearch.exceptions.ElasticsearchException, KeyError, IndexError, ValueError) as e:
+            log.debug(f'Failed to get source ID: {str(e)[:100]}')
+            log.debug(f'Defaulting to 1')
+            res = 1
+
+        return int(res)
 
 
 
@@ -500,139 +789,34 @@ class DB():
 
 
 
-    def close(self):
-
-        try:
-            self.main_client.close()
-        except AttributeError:
-            pass
-        try:
-            self.meta_client.close()
-        except AttributeError:
-            pass
-
-
-    def add_accounts(self, batch, source_id, tries=3):
+    def optimize_for_indexing(self, reset=False):
         '''
-        accepts a list of Account() objects
-        returns unique (new) Account() objects
-        if error was encountered, returns dictionary:
-            {'errors': [error1, error2, ...]}
+        Temporarily disables replication and index refresh and tunes for max indexing speed
         '''
 
-        tries_left = int(tries)
-
-        while tries_left:
-
-            try:
-
-                upserted_accounts = dict()
-                if self.meta_client:
-                    self._mongo_meta_add_batch(batch, source_id)
-                if self.main_client:
-                    upserted_accounts = self._mongo_main_add_batch(batch)
-
-                return upserted_accounts
-
-            except pymongo.errors.PyMongoError as e:
-                log.error(f'Database error encountered: {e}')
-                tries_left -= 1
-                sleep(5)
-
-        log.critical(f'Failed to add batch after {tries} tries')
-
-
-
-    def _mongo_main_add_batch(self, batch):
-
-        unique_accounts = 0
-        mongo_batch = []
-
-        # all_accounts holds {account_id: account} since the mongo result only includes the ID
-        all_accounts = dict()
-        upserted_accounts = dict()
-
-        for account in batch:
-            account_doc = account.document
-            _id = account_doc.pop('_id')
-            mongo_batch.append(pymongo.UpdateOne({'_id': _id}, {'$setOnInsert': account_doc}, upsert=True))
-            all_accounts[_id] = account
-
-        for _id in self.accounts.bulk_write(mongo_batch, ordered=False).upserted_ids.values():
-            upserted_accounts[_id] = None
-
-        # remove any account which is not unique
-        for _id in upserted_accounts.keys():
-            try:
-                upserted_accounts[_id] = all_accounts.pop(_id)
-            except KeyError:
-                continue
-
-        return list(upserted_accounts.values())
-
-
-
-    def _mongo_meta_add_batch(self, batch, source_id):
-
-        mongo_batch = []
-
-        for account in batch:
-            _id = account._id
-            mongo_batch.append(pymongo.UpdateOne({'_id': _id}, {'$addToSet': {'s': source_id}}, upsert=True))
-
-        result = self.accounts_metadata.bulk_write(mongo_batch, ordered=False)
-
-        return result
-
-
-
-    def _get_main_client(self):
-
-        try:
-
-            try:
-                main_server = config['MONGO PRIMARY']['server']
-                main_port = int(config['MONGO PRIMARY']['port'])
-                self.main_db_name = config['MONGO PRIMARY']['db']
-                mongo_user = config['MONGO GLOBAL']['user']
-                mongo_pass = config['MONGO GLOBAL']['pass']
-            except KeyError as e:
-                raise CredShedConfigError(str(e))
-
-            # main DB
-            mongo_client = pymongo.MongoClient(main_server, main_port, username=mongo_user, password=mongo_pass)
-            return mongo_client
-
-        except pymongo.errors.PyMongoError as e:
-            raise CredShedDatabaseError(error_detail(e))
-
-
-    def _get_meta_client(self):
-
-        try:
-
-            try:
-                meta_server = config['MONGO METADATA']['server']
-                meta_port = int(config['MONGO METADATA']['port'])
-                self.meta_db_name = config['MONGO METADATA']['db']
-                mongo_user = config['MONGO GLOBAL']['user']
-                mongo_pass = config['MONGO GLOBAL']['pass']
-            except KeyError as e:
-                raise CredShedConfigError(str(e))
-
-            # meta DB (account metadata including source information, leak <--> account associations, etc.)
-            mongo_client = pymongo.MongoClient(meta_server, meta_port, username=mongo_user, password=mongo_pass)
-            return mongo_client
-
-        except pymongo.errors.PyMongoError as e:
-            raise CredShedDatabaseError(error_detail(e))
-
-
-    def __enter__(self):
-
-        return self
-
-
-    def __exit__(self, exception_type, exception_value, traceback):
-
-        self.close()
+        if not reset:
+            log.info('Optimizing elasticsearch for import')
+            
+            log.info('Disabling replication and refresh')
+            self._op(
+                self.elastic.indices.put_settings,
+                index='accounts',
+                body={
+                    'number_of_replicas': 0,
+                    'refresh_interval': -1
+                }
+            )
+        '''
+        else:
+            log.debug('Import finished, resetting elasticsearch settings')
+            
+            log.debug('Re-enabling replication and index refresh')
+            self._op(
+                self.elastic.indices.put_settings,
+                index='accounts',
+                body={
+                    "number_of_replicas": 1,
+                    'refresh_interval': '1s'
+                }
+            )
+        '''

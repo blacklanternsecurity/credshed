@@ -11,14 +11,7 @@ Usage: ${0##*/} [option]
 
   Options:
 
-    [1] prep    create docker-compose.yml & init scripts
-    [2] start   start containers
-    [3] init    initialize mongodb shards
-        stop    stop containers
-        clean   remove artifacts such as docker containers & images
-        delete  delete entire database
-        rebuild alias for "stop delete prep start init"
-        reset   delete database contents & reinsert test data
+    [1] prep    create docker-compose.yml
 
 EOF
 exit 0
@@ -587,7 +580,7 @@ fi
 
 if [ -n "$do_init_shards" ]
 then
-    printf 'Sleeping for 60 seconds (a very long time is needed before the config server will respond\n')
+    printf 'Sleeping for 60 seconds (a very long time is needed before the config server will respond\n'
     sleep 60
     init_shards
 fi

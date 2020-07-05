@@ -3,6 +3,7 @@ import traceback
 from time import sleep
 import multiprocessing as mp
 from queue import Empty, Full
+from .errors import log_error
 
 
 # set up logging
@@ -38,6 +39,8 @@ class ProcessPool:
         # make the result queue
         self.result_queue = mp.Manager().Queue()
 
+        log.debug(f'Created ProcessPool with {self.processes:,} workers')
+
 
     def map(self, func, iterable, args=(), kwargs={}):
 
@@ -67,7 +70,7 @@ class ProcessPool:
                             yield result
 
                     # prevent unnecessary CPU usage
-                    sleep(.1)
+                    #sleep(.05)
 
             except AssertionError:
                 continue
@@ -97,7 +100,7 @@ class ProcessPool:
                 log.debug(f'{self.name}: {self.finished_counter:,} processes finished')
                 yield result
             except Empty:
-                sleep(.1)
+                sleep(.01)
                 break
 
 
@@ -111,7 +114,9 @@ class ProcessPool:
             result_queue.put(func(*args, **kwargs))
         except Exception as e:
             if type(e) not in [FileNotFoundError]:
-                log.critical(format_exc())
+                log_error(e)
+        except KeyboardInterrupt:
+            log.critical('Interrupted')
 
 
     @staticmethod

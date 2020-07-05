@@ -1,39 +1,23 @@
-#!/usr/bin/env python3
-
 # by TheTechromancer
 
 ### MISC FUNCTIONS USED THROUGHOUT THE CODEBASE ###
 
-import os
 import sys
 import logging
 from .errors import *
+from time import sleep
 from . import filestore
 from pathlib import Path
 
 log = logging.getLogger('credshed.util')
 
 
-def clean_encoding(s):
-    '''
-    Given bytes, try to decode and re-encode
-    If decoding fails, problematic characters are replaced with their hex code
-    E.g. "Pass\\x66word"
-    '''
-
-    if type(s) == bytes:
-        return decode(s).encode(encoding='utf-8')
-    elif type(s) == str:
-        return decode(s.encode(encoding='utf-8'))
-    raise ValueError('Incorrect type passed to clean_encoding()')
-
-
 def encode(s):
 
-	try:
-		return s.encode(encoding='utf-8')
-	except UnicodeEncodeError:
-		return ''
+    try:
+        return s.encode(encoding='utf-8')
+    except UnicodeEncodeError:
+        return ''
 
 
 def decode(b):
@@ -85,37 +69,53 @@ def number_range(s):
     return n_array
 
 
-def hash_file(filename):
-
-    try:
-        # if filestore is active, hash through the index in case it's already been cached
-        return filestore.filestore.hash_file(filename)
-
-    # otherwise, just dew it
-    except (AttributeError, FilestoreHashError) as e:
-        log.debug(e)
-        f = filestore.Filestore()
-        return f.hash_file(filename)
-
-
-def size(filename):
-
-    return filestore.util.size(filename)
-
-
-def recursive_file_list(paths):
+def recursive_file_list(paths, magic_blacklist=None, min_size=6):
     '''
     accepts single or multiple files/directories
     yields filenames
     compressed = whether or not to include compressed files
     '''
+
+    if magic_blacklist is None:
+        magic_blacklist = [
+            # PNG, JPEG, etc.
+            'image data',
+            # ZIP, GZ, etc.
+            'archive data',
+            # encrypted data
+            'encrypted'
+        ]
+
     if not type(paths) == list:
         paths = [paths]
 
     paths = [Path(p).resolve() for p in paths]
 
     for path in paths:
-        for file in filestore.util.list_files(path):
+
+        files = list(filestore.util.list_files(path))
+
+        for i, file in enumerate(files):
+
+            # check magic type
+            try:
+                magic_type = file.magic_type.lower()
+            except FileError as e:
+                log.warning(str(e))
+                continue
+
+            if any([x in magic_type for x in magic_blacklist]):
+                log.debug(f'Skipping file of type "{file.magic_type}"')
+                continue
+
+            # check size
+            if file.size < min_size:
+                log.debug(f'Skipping tiny/empty file "{file}"')
+                continue
+
+            if i % 1000 == 0:
+                log.info(f'Retrieved magic type from {i:,} / {len(files):,} files')
+
             yield file
 
 
@@ -142,3 +142,32 @@ def bytes_to_human(_bytes):
         _bytes /= 1024
 
     raise ValueError
+
+
+
+class FileLock:
+    '''
+    Implements a simple sempahore using the filesystem
+    '''
+    def __init__(self, name='/tmp/credshed.lock'):
+
+        self.file = Path(name).resolve()
+        self.interval = .1
+
+
+    def __enter__(self):
+
+        while 1:
+            if not self.file.is_file():
+                with open(self.file, 'w') as f:
+                    break
+            else:
+                sleep(self.interval)
+                continue
+
+        return self
+
+
+    def __exit__(self, exception_type, exception_value, traceback):
+
+        self.file.unlink()

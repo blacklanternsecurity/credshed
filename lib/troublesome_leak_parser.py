@@ -4,57 +4,34 @@
 
 import sys
 import argparse
-from .leak import *
+from pathlib import Path
+
+credshed_path = Path(__file__).resolve().parent.parent
+sys.path.append(str(credshed_path))
+from lib.parser import File
 
 
-class ExploitIn(Leak):
+def Adobe(file):
 
-    def __init__(self, dir_name, source='Exploit.in'):
+    good = 0
+    bad = 0
+    with open(file, 'rb') as f:
+        for line in f:
+            line = line.strip(b'\r\n')
+            if line:
+                split_line = [x.strip(b'-') for x in line.split(b'|-')]
+                try:
+                    username, email, password, misc = split_line[1:-1]
+                    # [self.email, self.username, self.password, self.formatted_hashes, self.misc]
+                    sys.stdout.buffer.write(b'\x00'.join([email, b'', b'', password, misc]) + b'\n')
+                    good += 1
+                except ValueError:
+                    bad += 1
 
-        super().__init__(source_name=source)
+    sys.stderr.write(f'good: {good}\n')
+    sys.stderr.write(f'bad: {bad}\n')
 
-        self.dir_name = Path(dir_name).resolve()
-
-
-    def read(self):
-
-        self.accounts = self._read()
-
-
-    def _read(self, files=['100.txt', '105.txt', '10.txt', '13.txt', '18.txt', '22.txt', '27.txt', '31.txt', '36.txt', '40.txt', '45.txt', '4.txt', '54.txt', '59.txt', '63.txt', '68.txt', '72.txt', '77.txt', '81.txt', '86.txt', '90.txt', '95.txt', '9.txt', '101.txt', '106.txt', '110.txt', '14.txt', '19.txt', '23.txt', '28.txt', '32.txt', '37.txt', '41.txt', '46.txt', '50.txt', '55.txt', '5.txt', '64.txt', '69.txt', '73.txt', '78.txt', '82.txt', '87.txt', '91.txt', '96.txt', '102.txt', '107.txt', '111.txt', '15.txt', '1.txt', '24.txt', '29.txt', '33.txt', '38.txt', '42.txt', '47.txt', '51.txt', '56.txt', '60.txt', '65.txt', '6.txt', '74.txt', '79.txt', '83.txt', '88.txt', '92.txt', '97.txt', '103.txt', '108.txt', '11.txt', '16.txt', '20.txt', '25.txt', '2.txt', '34.txt', '39.txt', '43.txt', '48.txt', '52.txt', '57.txt', '61.txt', '66.txt', '70.txt', '75.txt', '7.txt', '84.txt', '89.txt', '93.txt', '98.txt', '104.txt', '109.txt', '12.txt', '17.txt', '21.txt', '26.txt', '30.txt', '35.txt', '3.txt', '44.txt', '49.txt', '53.txt', '58.txt', '62.txt', '67.txt', '71.txt', '76.txt', '80.txt', '85.txt', '8.txt', '94.txt', '99.txt']):
-
-        counter = 0
-        for file in files:
-            filename = self.dir_name / file
-            
-            with open(str(filename), 'rb') as f:
-                for line in f:
-                    line = line.strip(b'\r\n')
-                    try:
-                        if b':' in line:
-                            email, password = line.split(b':')[:2]
-                        elif b';' in line:
-                            email, password = line.split(b';')[:2]
-                        else:
-                            continue
-                    except ValueError:
-                        sys.stderr.write('[!] Cannot translate line: {}\n'.format(str(line)[:64]))
-                        continue
-                    try:
-                        yield Account(email=email, password=password)
-                    except AccountCreationError as e:
-                        sys.stderr.write('[!] {} {}\n'.format(str(e)), str(line))
-                        continue
-
-                    if counter % 1000 == 0:
-                        sys.stderr.write('\r[+] {:,}'.format(counter))
-                    counter += 1
-
-
-
-
-
-
+"""
 class LinkedIn(Leak):
 
     def __init__(self, dir_name, source='LinkedIn', hashtype='SHA1'):
@@ -261,22 +238,16 @@ class LinkedIn(Leak):
                     errprint('\r[+] {:,}'.format(c), end='')
                 c += 1
         errprint('')
-
+"""
 
 
 def main(options):
 
-    l = None
-
     if 'linkedin'.startswith(options.leak):
-        l = LinkedIn(options.dir_name)
-    elif 'exploit.in'.startswith(options.leak):
-        l = ExploitIn(options.dir_name)
+        LinkedIn(options.file)
+    elif 'adobe'.startswith(options.leak):
+        Adobe(options.file)
 
-
-    if l is not None:
-        l.read()
-        l.dump()
 
 
 
@@ -285,30 +256,23 @@ if __name__ == '__main__':
 
     parser = argparse.ArgumentParser()
 
-    parser.add_argument('dir_name',     type=Path,  help='search term(s)')
-    parser.add_argument('-l', '--leak',             help='add file(s) to DB')
+    parser.add_argument('leak', help='leak name')
+    parser.add_argument('file', type=Path, help='leak file or dir')
 
     try:
 
-        if len(sys.argv) < 4:
+        if len(sys.argv) < 2:
             parser.print_help()
             exit(0)
 
         options = parser.parse_args()
         options.leak = options.leak.lower()
 
-        assert options.dir_name.exists(), 'Cannot find {}'.format(str(dir_name))
-
         main(options)
 
 
     except argparse.ArgumentError as e:
-        errprint('\n\n[!] {}\n[!] Check your syntax'.format(str(e)))
         exit(2)
 
     except KeyboardInterrupt:
-        errprint('\n\n[!] Interrupted')
         sys.exit(1)
-
-    except AssertionError as e:
-        errprint('\n\n[!] {}'.format(str(e)))

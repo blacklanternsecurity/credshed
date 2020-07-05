@@ -1,8 +1,5 @@
-#!/usr/bin/env python3
-
 # by TheTechromancer
 
-import re
 import base64
 import hashlib
 from .util import *
@@ -41,194 +38,155 @@ class AccountMetadata():
 class Account():
 
     # cut down on memory usage by not using a dictionary
-    __slots__ = ['email', 'username', 'password', 'hash', 'misc']
+    __slots__ = ['_id', '_email', 'domain', 'username', 'password', 'hashes', 'misc', 'sources']
 
-    valid_email_chars = b'abcdefghijklmnopqrstuvwxyz0123456789-_.+@'
-
-
-    # max length for email, username, and password
-    max_length_1 = 128
+    # max length for email, domain, username, and password
+    max_length_1 = 127
     # max length for hash, misc
-    max_length_2 = 1000
+    max_length_2 = 1023
 
-    def __init__(self, email=b'', username=b'', password=b'', _hash=b'', misc=b'', strict=False):
+    # translation table to strip bad characters from username
+    strip_from_username = str.maketrans('', '', "'\\")
 
-        # abort if values are too long
-        # saves the regexes from hogging CPU
-        #for v in [email, username, password]:
-        #    if len(v) >= self.max_length_1:
-        #        raise AccountCreationError('Value too long: {}'.format(str(v)[2:-1][:64]))
-        #for vi in [_hash, misc]:
-        #    if len(v) >= self.max_length_2:
-        #        raise AccountCreationError('Hash or desc. too long: {}'.format(str(v)[2:-1][:64]))
+    def __init__(self, email='', username='', password='', hashes=[], misc='', sources=[]):
 
-        # strip invalid characters from email
-        self.email = b''
-        email = email.strip().lower()
-        for i in range(len(email)):
-            c = email[i:i+1]
-            if c in self.valid_email_chars:
-                self.email += c
+        if type(hashes) == str:
+            hashes = [hashes]
+        if type(sources) in (str, int):
+            sources = [int(s)]
+        else:
+            sources = [int(s) for s in sources]
 
-        # remove whitespace, single-quotes, and backslashes
-        self.username = username.strip().translate(None, b"'\\")
-        self.misc = misc.strip(b'\r\n')
-        self.password = password.strip(b'\r\n')
-        self.hash = _hash.strip(b'\r\n')
+        self._id = ''
+
+        self.set_email(email)
+
+        # remove single-quotes and backslashes from username
+        self.username = username.strip().translate(self.strip_from_username)[:self.max_length_1]
+
+        # truncate values to max length
+        self.misc = misc[:self.max_length_2].strip()
+        self.password = password[:self.max_length_1]
+        self.hashes = [h[:self.max_length_2] for h in hashes]
+        self.sources = sources
 
         # if username is an email address, do the needful
-        if not self.email:
+        if not self._email:
             if validation.is_email(self.username):
-                self.email = self.username.lower()
-                self.username = b''
-
-        # otherwise, if email is invalid, make it a username (if there isn't one already)
-        elif not validation.is_email(self.email):
-            if strict:
-                raise AccountCreationError(f'Email validation failed on "{email}" and strict mode is enabled.')
-            elif not self.username:
-                self.email, self.username = b'', self.email
+                self.set_email(self.username)
+                self.username = ''
 
         # if password is hashed, put it in hash field
-        if not _hash and self.password:
+        if self.password:
             if validation.is_hash(self.password):
-                self.password, self.hash = b'', self.password
+                self.hashes.append(self.password)
+                self.password = ''
 
         # if the password is super long, put it in misc
-        if not self.misc and len(self.password) >= 100:
-            self.password, self.misc = b'', self.password
+        if not self.misc and len(self.password) >= self.max_length_1:
+            self.password, self.misc = '', self.password
 
         # keeping an email by itself is sometimes useful
         # if not strictly for OSINT purposes, at least knowing which leaks it was a part of
         # allows searching for additional information in the raw dump
-        if not (self.email or (self.username and (self.password or self.misc or self.hash))):
-            # print(email, username, password, _hash, misc)
+        if not (self._email or (self.username and (self.password or self.misc or self.hashes))):
             raise AccountCreationError(f'Not enough information to create account:\n{str(self)[:64]}')
-
-        # truncate values if longer than max length
-        self.email = clean_encoding(self.email)[-self.max_length_1:]
-        self.username = clean_encoding(self.username)[:self.max_length_1]
-        self.password = clean_encoding(self.password)[:self.max_length_1]
-        self.hash = clean_encoding(self.hash)[:self.max_length_2]
-        self.misc = clean_encoding(self.misc)[:self.max_length_2]
-
-
-    @property
-    def _id(self):
-
-        return self.to_object_id()
 
 
     @property
     def document(self, id_only=False):
-        '''
-        mongo-friendly doctionary representation
-        note: values must be truncated again here because they may become longer when decoded
-        '''
 
         doc = dict()
 
         try:
-            doc['_id'] = self.to_object_id()
+            doc['_id'] = self.id
             if not id_only:
-                if self.email:
-                    doc['e'] = decode(self.split_email[0])
+                if self._email:
+                    doc['e'] = self._email
+                    doc['d'] = self.domain[::-1]
                 if self.username:
-                    doc['u'] = decode(self.username)
+                    doc['u'] = self.username
                 if self.password:
-                    doc['p'] = decode(self.password)
-                if self.hash:
-                    doc['h'] = decode(self.hash)
+                    doc['p'] = self.password
+                if self.hashes:
+                    doc['h'] = list(set(self.hashes))
                 if self.misc:
-                    doc['m'] = decode(self.misc)
+                    doc['m'] = self.misc
         except ValueError:
             raise AccountCreationError(f'[!] Error formatting {str(self.bytes)[:64]}')
 
         return doc
 
 
-    @property
-    def json(self):
-        '''
-        human-friendly dictionary representation
-        '''
+    def set_email(self, email):
 
-        return {
-            'i': str(self._id),
-            'e': decode(self.email),
-            'u': decode(self.username),
-            'p': decode(self.password),
-            'h': decode(self.hash),
-            'm': decode(self.misc)
-        }
+        self._email = ''
+        email = email.lower()
+        new_email = []
+        for i in range(len(email)):
+            c = email[i:i+1]
+            if c in validation.email_charset:
+                new_email.append(c)
 
+        new_email = ''.join(new_email[-self.max_length_1:])
+        if not validation.is_email(new_email):
+            raise AccountCreationError(f'Invalid email: {new_email}')
 
-    @property
-    def split_email(self):
-
-        try:
-            email, domain = self.email.split(b'@')[:2]
-            return [email, domain]
-        except ValueError:
-            return [self.email, b'']
-
-
-    @property
-    def domain(self):
-        domain = self.email.split(b'@')[-1]
-
+        self._email, self.domain = new_email.split('@', 1)
 
 
     @classmethod
     def from_document(cls, document):
 
-        try:
-            email = (document['e'] + '@' + document['_id'].split('|')[0][::-1]).encode(encoding='utf-8')
-        except KeyError:
-            email = b''
-        except UnicodeEncodeError:
-            email = encode(email) + b'@' + encode(domain[::-1])
-        except (ValueError, TypeError):
-            raise AccountCreationError(f'Unable to create account from document {document}')
-        username = cls._if_key_exists(document, 'u')
-        password = cls._if_key_exists(document, 'p')
-        _hash = cls._if_key_exists(document, 'h')
-        misc = cls._if_key_exists(document, 'm')
-        return Account(email=email, username=username, password=password, _hash=_hash, misc=misc)
-
-
-    @staticmethod
-    def _if_key_exists(d, k):
-
-        try:
-            return encode(d[k])
-        except KeyError:
-            return b''
+        _email = document.get('e')
+        domain = document.get('d')
+        if _email and domain:
+            email = _email + '@' + domain[::-1]
+        else:
+            email = ''
+        username = document.get('u', '')
+        password = document.get('p', '')
+        hashes = document.get('h', [])
+        misc = document.get('m', '')
+        sources = document.get('s', [])
+        return cls(email=email, username=username, password=password, hashes=hashes, misc=misc, sources=sources)
 
 
     @property
     def bytes(self, delimiter=b'\x00'):
 
-        return delimiter.join([self.email, self.username, self.password, self.hash, self.misc])
+        return delimiter.join(
+            x.encode('utf-8', errors='ignore') for x in 
+            [self.email, self.username, self.password, self.formatted_hashes, self.misc]
+        )
 
 
-    def to_object_id(self):
+    @property
+    def id(self):
         '''
-        hacky compound domain-->email index
-        first 6 bytes of _id after the domain are a hash of the email
+        sha1 is used for speed, collisions are *very* unlikely in datasets of this size
         '''
 
-        if self.email:
-            # _id begins with reversed domain
-            email, domain = self.split_email
-            domain_chunk = decode(domain[::-1])
-            email_hash = decode(base64.b64encode(hashlib.sha256(email).digest()[:6]))
-            account_hash = email_hash + decode(base64.b64encode(hashlib.sha256(self.bytes).digest()[:6]))
+        if not self._id:
+            self._id = base64.b64encode(hashlib.sha256(self.bytes).digest())[:20].decode()
+        return self._id
+
+
+    @property
+    def formatted_hashes(self):
+
+        hashes = list(set(self.hashes))
+        hashes.sort(key=lambda x: len(x))
+        return '|'.join(hashes)
+
+
+    @property
+    def email(self):
+
+        if self._email and self.domain:
+            return self._email + '@' + self.domain
         else:
-            account_hash = decode(base64.b64encode(hashlib.sha256(self.bytes).digest()[:12]))
-            domain_chunk = ''
-
-        return '|'.join([domain_chunk, account_hash])
+            return ''
 
 
     def __repr__(self):
@@ -249,18 +207,15 @@ class Account():
 
     def __hash__(self):
 
-        #return hash(self.email + self.username + self.password + self.hash + self.misc)
         return hash(self.bytes)
 
 
     def __str__(self):
 
-        return ':'.join([decode(b) for b in [self.email, self.username, self.password, self.hash, self.misc]])
+        return ':'.join([self.email, self.username, self.password, self.formatted_hashes, self.misc])
 
 
     def __iter__(self):
 
         for k,v in self.document.items():
             yield (k,v)
-
-

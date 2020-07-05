@@ -2,20 +2,21 @@
 
 # by TheTechromancer
 
-
 import sys
 import logging
 import argparse
-from lib import util
 from lib import logger
 from time import sleep
 import multiprocessing
 from lib.errors import *
 from pathlib import Path
+import concurrent.futures
 from lib.credshed import *
 from lib import validation
+from lib.parser import File
 from lib.processpool import *
 from datetime import datetime
+from lib import util as core_util
 from lib.filestore import util as filestore_util
 
 # set up logging
@@ -32,26 +33,21 @@ class CredShedCLI(CredShed):
     def search(self):
 
         start_time = datetime.now()
-        num_accounts_in_db = self.db.account_count()
+        num_accounts_in_db = self.db.index_size()
 
-        left = int(self.options.limit)
+        left = int(self.options.limit) - 1
 
         num_results = 0
         for keyword in self.options.search:
-            if self.options.limit == 0 or left > 0:
+            if self.options.limit == -1 or left > 0:
                 query_type = validation.validate_query_type(keyword, self.options.query_type)
                 log.info(f'Searching by {query_type}: {keyword}')
-                for account in super().search(keyword, limit=left):
 
+                for account in super().search(keyword, limit=left):
                     if self.options.print0:
                         sys.stdout.buffer.write(account.bytes + b'\n')
                     else:
                         print(str(account))
-                    if self.options.verbose:
-                        metadata = self.db.fetch_account_metadata(account)
-                        if metadata:
-                            print(metadata)
-
                     num_results += 1
                     if self.options.limit > 0:
                         if left <= 0:
@@ -61,11 +57,15 @@ class CredShedCLI(CredShed):
         end_time = datetime.now()
         time_elapsed = (end_time - start_time)
         log.info(f'Searched {num_accounts_in_db:,} accounts in {str(time_elapsed)[:-4]} seconds')
-        if self.options.limit:
+        if options.limit > 0:
             total_count = 0
             for keyword in self.options.search:
-                total_count += self.count(keyword)
-            log.info(f'Showing {num_results:,}/{total_count:,} results')
+                total_count += self.count(keyword, self.options.query_type)
+            if total_count >= 10000:
+                total_count = f'{max(total_count, num_results):,}+'
+            else:
+                total_count = f'{total_count:,}'
+            log.info(f'Showing {num_results:,}/{total_count} results')
         else:
             log.info(f'{num_results:,} results for "{" + ".join(self.options.search)}"')
 
@@ -82,26 +82,25 @@ class CredShedCLI(CredShed):
         print(super().db_stats())
 
 
-    @classmethod
-    def import_file(cls, filename, options):
-
-        if filestore_util.is_compressed(str(filename)):
-            log.warning(f'Skipping compressed / encrypted file: {file}')
-            return (0,0)
+    def import_file(self, filename, options):
 
         try:
             return super().import_file(
                 filename,
                 unattended=options.unattended,
-                threads=options.threads,
-                show=options.show_unique,
-                force=options.force_injest,
+                force=options.force_ingest,
                 stdout=options.stdout,
+                force_ascii=False
             )
 
-        except InjestorError as e:
-            log.error(f'Injestor Error: {e}')
-            return (0,0)
+        except CredShedDatabaseError:
+            return super().import_file(
+                filename,
+                unattended=options.unattended,
+                force=options.force_ingest,
+                stdout=options.stdout,
+                force_ascii=True
+            )
 
         except KeyboardInterrupt:
             log.critical('Interrupted')
@@ -113,41 +112,95 @@ class CredShedCLI(CredShed):
         benchmark for full /etc import (1,500 files):
             3 process, main thread: 2:13
             3 processes: 1:27
+
+        benchmark for rockyou-accounts-1M.txt:
+            --threads 10, 3 node cluster, replicas 0: 2:40
+            --threads 10, single node, replicas 0: 2:26
         '''
 
         total_accounts = 0
         unique_accounts = 0
 
-        # files that have at least one account (even if it's not been seen before)
+        # total number of files processed
+        processed_files = 0
+        # number of files that contained at least one account
         interesting_files = 0
 
         major_start_time = datetime.now()
 
         # make a list of all files (excluding compressed ones)
-        filelist = list(util.recursive_file_list(self.options.injest))
-        log.info(f'Importing {len(filelist):,} files')
+        filelist = list(set(core_util.recursive_file_list(self.options.ingest)))
+        total_file_count = len(filelist)
+        log.info(f'Importing a total of {len(filelist):,} files')
 
-        file_threads = min(3, len(filelist))
+        # there shouldn't be more threads than files
+        #file_threads = min(10, len(filelist))
 
-        # if unattended, thread like it's 1999
-        if self.options.unattended and file_threads > 1:
-            self.options.threads = max(1, int(self.options.threads/file_threads))
+        # make temporary config changes to speed up import
+        if not self.options.stdout:
+            self.db.optimize_for_indexing()
 
-            with ProcessPool(file_threads, name='Import') as pool:
-                for unique, total in pool.map(self.import_file, filelist, (self.options,)):
+        # if unattended, spawn processes like there's no tomorrow
+        if self.options.unattended and self.options.threads > 1:
+
+            # we only parallelize files larger than 2MB
+            parallelization_threshold_bytes = 2000000
+
+            # because os.fork() is expensive
+            large_files = [f for f in filelist if f.size > parallelization_threshold_bytes]
+            filelist = [f for f in filelist if f.size <= parallelization_threshold_bytes]
+
+            # ensure total number of threads stay consistent
+            #self.options.threads = max(1, int(self.options.threads/file_threads))
+            if large_files:
+                log.info(f'Importing {len(large_files):,} files using {self.options.threads:,} file threads')
+
+                with ProcessPool(self.options.threads, name='Import') as pool:
+                    for unique, total in pool.map(self.import_file, large_files, (self.options,)):
+                        processed_files += 1
+                        if total > 0:
+                            interesting_files += 1
+                        unique_accounts += unique
+                        total_accounts += total
+
+                        progress_time = datetime.now()
+                        time_elapsed = (progress_time - major_start_time).total_seconds()
+                        log.info(
+                            'Imported {:,}/{:,}/{:,} files in {:02d}:{:02d}:{:02d}'.format(
+                                interesting_files,
+                                processed_files,
+                                total_file_count,
+                                int(time_elapsed // 3600),
+                                int((time_elapsed % 3600) // 60),
+                                int(time_elapsed % 60)
+                            )
+                        )
+
+        # use normal Python threading for all the smaller files
+        if filelist:
+            log.info(f'Importing {len(filelist):,} files using main thread')
+            with concurrent.futures.ThreadPoolExecutor(max_workers=self.options.threads) as thread_pool:
+                results = [thread_pool.submit(self.import_file, filename, options) for filename in filelist]
+                for result in concurrent.futures.as_completed(results):
+                    unique,total = result.result()
+                    processed_files += 1
                     if total > 0:
                         interesting_files += 1
                     unique_accounts += unique
                     total_accounts += total
 
-        # otherwise, just be normal
-        else:
-            for filename in filelist:
-                unique, total = self.import_file(filename, self.options)
-                if total > 0:
-                    interesting_files += 1
-                unique_accounts += unique
-                total_accounts += total
+                    progress_time = datetime.now()
+                    time_elapsed = (progress_time - major_start_time).total_seconds()
+                    log.info(
+                        'Imported {:,}/{:,}/{:,} files in {:02d}:{:02d}:{:02d}'.format(
+                            interesting_files,
+                            processed_files,
+                            total_file_count,
+                            int(time_elapsed // 3600),
+                            int((time_elapsed % 3600) // 60),
+                            int(time_elapsed % 60)
+                        )
+                    )
 
 
         end_time = datetime.now()
@@ -162,6 +215,10 @@ class CredShedCLI(CredShed):
             int((time_elapsed % 3600) // 60),
             int(time_elapsed % 60)
         ))
+
+        # set config back to normal
+        if not self.options.stdout:
+            self.db.optimize_for_indexing(reset=True)
 
 
     def delete_leak(self):
@@ -219,6 +276,56 @@ class CredShedCLI(CredShed):
 
 
 def main(options):
+    '''
+    exploit.in import benchmarks (680,575,885 unique / 796,787,228 total):
+        10 nodes, 20 CPUs each, 6GB index mem, 19GB JVM mem, 100 shards:
+            - starts off at 3.3M per minute (660K / minute * 5 file threads)
+            - after 100M documents, slows to ~500K per minute
+            - after 150M documents, slows to ~400K per minute
+        20 nodes, 10 CPUs each, 3GB index mem, 10GB JVM mem, 20 shards:
+            - starts off at ~500K per minute
+        10 nodes, 20 CPUs each, 9.5GB index mem, 19GB JVM mem, 1000 shards:
+            - starts off at 5.5M per second
+            - quickly drops to basically nothing
+        10 nodes, 20 CPUs each, 10GB index mem, 19GB JVM mem, 200 shards:
+            - starts off super slow, ~100K per second
+            - speeds up a LOT after a few minutes, 3.5M per second
+            - after 50M documents, slows to ~150K per minute
+        1 node, all CPUs, 150GB JVM mem, 5 shards:
+            - starts off at 3.5M per minute
+            - slowly decreases, ~800K per minute at 500M documents
+            - total time elapsed: 755m 42s
+        1 node, all CPUs, 200GB JVM mem, 50 shards:
+            - starts off at 3.5M per minute
+            - quickly drops to <500k per minute
+        1 node, all CPUs, 200GB JVM mem, 50GB index mem, 10 shards:
+            - starts off at 1.4M per minute
+            - quickly increases to 6.5M per minute
+            - evens out at 1.3M per minute
+            - total time elapsed: 660m 15s
+        1 node, all CPUs, 200GB JVM mem, 50GB index mem, 20 shards:
+            - starts off at 1.4M per minute
+            - evens out at 800K per minute
+            - total time elapsed: 846m 55s
+        1 node, all CPUs, 200GB JVM mem, 50GB index mem, 2 shards:
+            - starts off at 5M per minute
+            - quickly drops to 2M per minute
+            - evens out at 1M per minute
+            - total time elapsed: 585m 14s
+            - 686,345,232/803,126,569
+            - 2nd run total time elapsed: 460m 43s
+            - 686,029,758/803,126,569
+        1 node, all CPUs, 200GB JVM mem, 50GB index mem, 1 shard:
+            - starts off at 5M per minute
+            - evens out at 1.2M per minute
+            - total time elapsed: 764m 58s
+            - 686,273,343/803,126,569
+        1 node, all CPUs, 200GB JVM mem, 50GB index mem, 3 shards:
+            - starts off at 5M per minute
+            - evens out at 1.1M per minute
+            - total time elapsed: 644m 48s
+            - 686,362,834/803,126,569
+    '''
 
     try:
 
@@ -230,16 +337,17 @@ def main(options):
 
         # if we're importing stuff
         try:
-            if options.injest:
+            if options.drop:
+                log.critical('--drop DELETES ALL DATA FROM THE DATABASE')
+                log.critical('Press CTRL+C within 5 seconds to cancel')
+                sleep(5)
+                credshed.drop()
+
+            if options.ingest:
                 credshed.import_files()
 
             elif options.delete_leak is not None:
                 credshed.delete_leak()
-
-            if options.stats:
-                if not options.search:
-                    raise AssertionError('Please specify search query')
-                credshed.query_stats()
 
             elif options.search:
                 credshed.search()
@@ -258,9 +366,8 @@ def main(options):
         except CredShedError as e:
             log.error('{}: {}\n'.format(e.__class__.__name__, str(e)))
 
-        finally:
-            # close mongodb connection
-            credshed.db.close()
+    except KeyboardInterrupt:
+        log.critical('Interrupted')
 
     except Exception as e:
         import traceback
@@ -271,27 +378,24 @@ def main(options):
 if __name__ == '__main__':
 
     parser = argparse.ArgumentParser()
-    # 2 <= threads <= 12
     num_cores = multiprocessing.cpu_count()
-    #default_threads = max(2, min(12, (int(num_cores/1.5)+1)))
-    default_threads = int(num_cores)
+    default_threads = min(5, int(num_cores))
 
     parser.add_argument('search',                       nargs='*',                      help='search term(s)')
     parser.add_argument('-q', '--query-type',           default='auto',                 help='query type (email, domain, or username)')
-    parser.add_argument('-i', '--injest',   type=Path,  nargs='+',                      help='import files or directories into the database')
-    parser.add_argument('-f', '--force-injest',         action='store_true',            help='also injest files which have already been imported')
+    parser.add_argument('-i', '--ingest',   type=Path,  nargs='+',                      help='import files or directories into the database')
+    parser.add_argument('-f', '--force-ingest',         action='store_true',            help='also ingest files which have already been imported')
     parser.add_argument('-db', '--db-stats', action='store_true',                       help='show all imported leaks and DB stats')
-    parser.add_argument('-t', '--stats',    action='store_true',                        help='show query statistics instead of individual accounts')
     parser.add_argument('-s', '--stdout',   action='store_true',                        help='when importing, write to stdout instead of database (null-byte delimited, use tr \'\\0\')')
     parser.add_argument('-d', '--delete-leak',          nargs='*',                      help='delete leak(s) from database, e.g. "1-3,5,7-9"', metavar='SOURCE_ID')
     parser.add_argument('-dd', '--deduplication',       action='store_true',            help='deduplicate accounts ahead of time (lots of memory usage on large files)')
+    parser.add_argument('--drop',                       action='store_true',            help='delete the entire database D:')
     parser.add_argument('--threads',        type=int,   default=default_threads,        help='number of threads for import operations')
-    parser.add_argument('--show-unique',                action='store_true',            help='during import, print unique accounts')
     parser.add_argument('--print0',                     action='store_true',            help='delimit search results by null byte instead of colon')
-    parser.add_argument('--limit',          type=int,   default=0,                      help='limit number of results (default: unlimited)')
+    parser.add_argument('--limit',          type=int,   default=-1,                     help='limit number of results (default: unlimited)')
     parser.add_argument('-u', '--unattended',           action='store_true',            help='auto-detect import fields without user interaction')
-    parser.add_argument('-v', '--verbose',              action='store_true',            help='display all available data for each account')
-    parser.add_argument('--debug',                      action='store_true',            help='display debugging info')
+    parser.add_argument('-v', '--verbose',              action='store_true',            help='show what is happening')
+    parser.add_argument('--debug',                      action='store_true',            help='display detailed debugging info')
 
     try:
 
@@ -303,11 +407,17 @@ if __name__ == '__main__':
 
         options = parser.parse_args()
 
-        if options.debug:
+        if options.verbose or options.debug:
             logging.getLogger('credshed').setLevel(logging.DEBUG)
             options.verbose = True
+            # elastic debug logging
 
-        if options.injest and not options.unattended:
+        if options.debug:
+            es_trace_logger = logging.getLogger('elasticsearch')
+            es_trace_logger.setLevel(log.getEffectiveLevel())
+            es_trace_logger.addHandler(logger.console)
+
+        if options.ingest and not options.unattended:
             logger.listener.start()
             main(options)
 

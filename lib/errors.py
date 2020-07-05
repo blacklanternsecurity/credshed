@@ -1,4 +1,7 @@
-#!/usr/bin/env python3
+import logging
+from traceback import format_exc
+
+log = logging.getLogger('credshed')
 
 # by TheTechromancer
 
@@ -34,12 +37,12 @@ class LineAbsorptionError(AccountCreationError):
 class CredShedEmailError(CredShedError):
     pass
 
-# Injestor-specific
+# Parser-specific
 
-class InjestorError(CredShedError):
+class ParserError(CredShedError):
     pass
 
-class TextParseError(InjestorError):
+class TextParseError(ParserError):
     pass
 
 class TextParsePermissionError(TextParseError):
@@ -49,6 +52,18 @@ class DelimiterError(TextParseError):
     pass
 
 class FieldDetectionError(TextParseError):
+    pass
+
+class FileError(ParserError):
+    pass
+
+class FileReadError(FileError):
+    pass
+
+class FileHashError(FileError):
+    pass
+
+class FileSizeError(FileError):
     pass
 
 
@@ -68,3 +83,16 @@ class FilestoreMetadataError(FilestoreError):
 
 class FilestoreUtilError(CredShedUtilError):
     pass
+
+
+
+def log_error(e, max_length=10000):
+    '''
+    Log a short version of the error
+    If debugging is enabled, log the entire traceback
+    '''
+
+    if log.level <= logging.DEBUG:
+        log.error(format_exc()[:max_length])
+    else:
+        log.error(str(e)[:max_length])
