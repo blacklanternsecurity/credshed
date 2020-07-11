@@ -9,11 +9,7 @@ Pastebin Scraper Report
 ## CLI Usage
 ~~~
 $ ./credshed-cli.py --help
-usage: credshed-cli.py [-h] [-q QUERY_TYPE] [-a ADD [ADD ...]] [-t] [-o OUT]
-                       [-d [SOURCE_ID [SOURCE_ID ...]]] [-dd]
-                       [--threads THREADS] [--show-unique] [-u]
-                       [--no-metadata] [--metadata-only] [-v] [--debug]
-                       [search [search ...]]
+usage: credshed-cli.py [-h] [-q QUERY_TYPE] [-i INGEST [INGEST ...]] [-f] [-db] [-s] [-d [SOURCE_ID [SOURCE_ID ...]]] [-dd] [--drop] [--threads THREADS] [--print0] [--limit LIMIT] [-u] [-v] [--debug] [search [search ...]]
 
 positional arguments:
   search                search term(s)
@@ -22,87 +18,44 @@ optional arguments:
   -h, --help            show this help message and exit
   -q QUERY_TYPE, --query-type QUERY_TYPE
                         query type (email, domain, or username)
-  -a ADD [ADD ...], --add ADD [ADD ...]
-                        add files or directories to the database
-  -t, --stats           show all imported leaks and DB stats
-  -o OUT, --out OUT     write output to file instead of database
+  -i INGEST [INGEST ...], --ingest INGEST [INGEST ...]
+                        import files or directories into the database
+  -f, --force-ingest    also ingest files which have already been imported
+  -db, --db-stats       show all imported leaks and DB stats
+  -s, --stdout          when importing, write to stdout instead of database (null-byte delimited, use tr '\0')
   -d [SOURCE_ID [SOURCE_ID ...]], --delete-leak [SOURCE_ID [SOURCE_ID ...]]
                         delete leak(s) from database, e.g. "1-3,5,7-9"
-  -dd, --deduplication  deduplicate accounts ahead of time (lots of memory
-                        usage on large files)
+  -dd, --deduplication  deduplicate accounts ahead of time by loading them into memory
+  --drop                delete the entire database D:
   --threads THREADS     number of threads for import operations
-  --show-unique         show each unique imported account
+  --print0              delimit search results by null byte instead of colon
+  --limit LIMIT         limit number of results (default: unlimited)
   -u, --unattended      auto-detect import fields without user interaction
-  --no-metadata         don't use metadata database
-  --metadata-only       when importing, only import metadata
-  -v, --verbose         display all available data for each account
-  --debug               display debugging info
+  -v, --verbose         show what is happening
+  --debug               display detailed debugging info
 ~~~
 
 ## Setup
-Database setup is almost entirely automated with the `srv.sh` script located in `credshed/docker`
-- NOTE: this will set up a sharded mongo cluster on the local machine using Docker Compose.  If you're familiar with MongoDB, feel free to set up the database manually.
+Credshed uses mongodb to store data.  Setup can be as simple as `docker run -p 27017 mongo`, although I highly recommend using `deploy/docker-compose.yml`, which contains optimizations for heavy write loads.
+1. Create a directory where you'd like to store the data, and chmod it to UID 999 (the default mongodb user)
 ~~~
-$ ./srv.sh --help
-Usage: srv.sh [option]
-
-  Options:
-
-    [1] prep    create docker-compose.yml & init scripts
-    [2] start   start containers
-    [3] init    initialize mongodb shards
-        stop    stop dockerd
-        clean   remove artifacts such as docker containers & images
-        delete  delete entire database
+$ mkdir /data
+$ chown 999:999 /data
 ~~~
-
-2. Take a look at the settings in `credshed/docker/srv.config`
-  - Choose the number of shards you want and the location of the database
-  - And for the love of geebus, change the password
+2. Edit `deploy/docker-compose.yml` and ensure the volume is pointing to the new data directory you just created.  And for the love of heaven, pick a secure password.
+3. Bring up the mongodb service
 ~~~
-$ cd credshed/docker
-$ cat srv.config
-num_shards=4
-
-mongo_main_dir='/tmp/credshed/db/main'
-mongo_meta_dir='/tmp/credshed/db/meta'
-mongo_script_dir='/tmp/credshed/mongo_scripts'
-mongo_user=root
-mongo_pass=INTHENAMEOFALLTHATISHOLYPLEASECHANGETHIS
+$ cd deploy
+$ docker-compose up
 ~~~
-3. Once `srv.config` has been edited to your liking, execute this command to perform all the necessary setup.  Execution will take a couple of minutes and you will see a lot of output.  Note that after `prep` and `init` have been run, you only need to execute `start` and `stop` going forward.
-~~~
-$ ./srv.sh prep start init
-~~~
-4. Delete `srv.config` (or remove the password) as it is no longer needed
-5. Take a look at `credshed.config`
-  - Change the password to the same one as before
-  - Fill out the appropriate server and port settings
-~~~
-# required
-[MONGO PRIMARY]
-server=127.0.0.1
-port=27000
-db=credshed
-
-# not required
-[MONGO METADATA]
-server=127.0.0.1
-port=27001
-db=credshed
-
-[GLOBAL]
-# username and password are applied to both instances
-user=root
-pass=INTHENAMEOFALLTHATISHOLYPLEASECHANGETHIS
-~~~
-6. Verify the config is valid by searching the database
+4. Place the same password in `credshed.config` and make sure the host and port matches your database configuration
+6. Verify the config is valid by searching the database (it will be empty at this point, that's fine)
 ~~~
 $ ./credshed-cli.py test@example.com
 ~~~
 7. (Optional) Set the database to start automatically:
-  - First stop any running instances
-  - Edit `WorkingDirectory` in `credshed/docker/credshed.service` to match the directory where it is installed
+  - First, stop the database
+  - Edit `WorkingDirectory` in `deploy/credshed.service` to match the directory where it is installed
   - Install, enable, and start the credshed systemd service
 ~~~
 $ sudo cp credshed/docker/credshed.service /etc/systemd/system/
@@ -111,42 +64,17 @@ $ sudo systemctl enable credshed.service --now
 $ journalctl -xefu credshed.service
 ~~~
 8. (Optional) If you want to enable logging, create the directory `/var/log/credshed` and make sure whichever user is running `credshed-cli.py` has write access
-9. (Optional) Set up Pastebin scraping
-  - Visit https://pastebin.com/doc_scraping_api and whitelist your IP address. (the scraping code does not need your API key)
-  - Run the script to make sure it works
-~~~
-$ ./pastebin-scaper.py
-INFO] Retrieving 100 newest pastes
-[DEBUG] Fetching https://scrape.pastebin.com/api_scrape_item.php?i=1a2b3c4d
-...
-~~~
-  - Edit `WorkingDirectory` in `credshed/docker/pastebin-scraper.service` to match the directory where it is installed
-  - Change `User` in `credshed/docker/pastebin-scraper.service` to a low-privileged user (for security)
-  - Install, enable, and start the pastebin-scraper systemd service
-~~~
-$ sudo cp credshed/docker/pastebin-scraper.service /etc/systemd/system/
-$ sudo systemctl enable pastebin-scraper.service --now
-# check on its status
-$ journalctl -xefu pastebin-scraper.service
-~~~
-  - NOTE: interesting pastes will also be saved to the current working directory unless the `--dont-save` option is specified.  You can change the save directory with the `--save-dir` option.
 
-## Pastebin Scraper Usage
-~~~
-$ ./pastebin-scraper.py --help
-usage: pastebin-scraper.py [-h] [-d LOOP_DELAY] [-s SCRAPE_LIMIT]
-                           [--save-dir SAVE_DIR] [--dont-save] [--no-metadata]
-                           [--metadata-only]
 
-optional arguments:
-  -h, --help            show this help message and exit
-  -d LOOP_DELAY, --loop-delay LOOP_DELAY
-                        seconds between API queries (default 60)
-  -s SCRAPE_LIMIT, --scrape-limit SCRAPE_LIMIT
-                        max pastes to scrape at once (default 100)
-  --save-dir SAVE_DIR   save pastes as files here (default
-                        /opt/credshed)
-  --dont-save           don't write pastes to file
-  --no-metadata         disable metadata database
-  --metadata-only       when importing, only import metadata
+## Example 1: Extract all compressed files
+Credshed will locate every compressed file, determine its format (e.g. zip, gzip, 7zip, etc.), and attempt to extract it.  This includes converting XLSX files to CSV
+~~~
+# It's a good idea to run this a few times until all possible archives are extracted.
+$ ./filestore-cli.py ./filestore-cli.py --extract --delete /mnt/leaks
+~~~
+
+## Example 2: Load files (or directories) into database
+Search for emails in every file and import into the database.  Credshed will automatically determine the encoding of each file.  It detects and handles emails, hashes, and even SQL statements.
+~~~
+$ ./credshed-cli.py --unattended --ingest /mnt/leaks
 ~~~

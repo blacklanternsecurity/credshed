@@ -113,7 +113,7 @@ class ProcessPool:
         try:
             result_queue.put(func(*args, **kwargs))
         except Exception as e:
-            if type(e) not in [FileNotFoundError]:
+            if type(e) not in (FileNotFoundError, ConnectionResetError, BrokenPipeError):
                 log_error(e)
         except KeyboardInterrupt:
             log.critical('Interrupted')

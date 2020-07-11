@@ -15,9 +15,9 @@ docker_compose_template = '''
 version: '3.7'
 
 services:
-{master_node}
-{data_nodes}
-{kibana_node}
+{mongo_router_node}
+{mongo_config_node}
+{mongo_data_nodes}
 
 networks:
   default:
@@ -27,98 +27,54 @@ networks:
         - subnet: 172.16.57.0/24
 '''
 
-master_node_template = '''
+mongo_router_template = '''
   {node_name}:
-    image: docker.elastic.co/elasticsearch/elasticsearch:7.7.0
+    image: mongo
+    command: mongos --keyFile /scripts/mongodb.key --port 27017 --configdb main_configserver/main_config0:27017 --bind_ip_all
     ports:
-      - "127.0.0.1:9200:9200"
-      - "127.0.0.1:9300:9300"
+      - \"127.0.0.1:27000:27017\"
     volumes:
-      - type: bind
-        source: {data_dir}/{node_name}
-        target: /usr/share/elasticsearch/data
-        consistency: delegated
-    environment:
-      # max memory usage
-      - ES_JAVA_OPTS=-Xmx{mem}g -Xms{mem}g
-      # disable memory swapping
-      - bootstrap.memory_lock=true
-      # single node
-      #- discovery.type=single-node
-      # node name
-      - node.name={node_name}
-      # node processors
-      - node.processors={cpus}
-      # master-eligible node
-      - node.master=true
-      - node.data=false
-      # initial master node
-      - cluster.initial_master_nodes={node_name}
-      # master-eligible nodes
-      - discovery.seed_hosts={node_name}
-      # authentication
-      - ELASTICSEARCH_USERNAME={username}
-      - ELASTICSEARCH_PASSWORD={password}
-    # allows for swap disablement
+      - {mongo_script_dir}:/scripts
     ulimits:
-      memlock:
-        soft: -1
-        hard: -1
-'''
-
-data_node_template = '''
-  {node_name}:
-    image: docker.elastic.co/elasticsearch/elasticsearch:7.7.0
-    volumes:
-      - type: bind
-        source: {data_dir}/{node_name}
-        target: /usr/share/elasticsearch/data
-        consistency: delegated
-    expose:
-      - 9200
-      - 9300
-    environment:
-      # max memory usage
-      - ES_JAVA_OPTS=-Xmx{mem}g -Xms{mem}g
-      # extra memory for indexing
-      - indices.memory.index_buffer_size={index_mem:.0f}m
-      # disable memory swapping
-      - bootstrap.memory_lock=true
-      # single node
-      #- discovery.type=single-node
-      # node name
-      - node.name={node_name}
-      # node processors
-      - node.processors={cpus}
-      # master-eligible node
-      - node.master=false
-      # initial master node
-      - cluster.initial_master_nodes={master_node_name}
-      # master-eligible nodes
-      - discovery.seed_hosts={master_node_name}
-      # authentication
-      - ELASTICSEARCH_USERNAME={username}
-      - ELASTICSEARCH_PASSWORD={password}
-    # allows for swap disablement
-    ulimits:
-      memlock:
-        soft: -1
-        hard: -1
-'''
-
-kibana_node_template = '''
-  kibana:
-    image: docker.elastic.co/kibana/kibana:7.7.0
-    ports:
-      - "127.0.0.1:5601:5601"
-    environment:
-      - ELASTICSEARCH_HOSTS=http://{master_node_name}:9200
-      - ELASTICSEARCH_USERNAME={username}
-      - ELASTICSEARCH_PASSWORD={password}
-      - XPACK_MONITORING_ENABLED=true
+      nproc: 65535
+      nofile:
+        soft: 100000
+        hard: 200000
     depends_on:
-      - es_master
-      - {data_node_list}
+      - main_config0
+      - {mongo_shards}
+    networks:
+        - mongo_main
+'''
+
+mongo_config_template = '''
+  {node_name}:
+    image: mongo
+    command: mongod --keyFile /scripts/mongodb.key --port 27017 --configsvr --replSet main_configserver --bind_ip_all
+    volumes:
+      - {mongo_script_dir}:/scripts
+      - {data_dir}/{node_name}:/data/configdb:delegated
+    environment:
+      - MONGO_INITDB_ROOT_USERNAME=${mongo_user}
+      - MONGO_INITDB_ROOT_PASSWORD=${mongo_pass}
+    networks:
+      - mongo_main
+'''
+
+mongo_data_template = '''
+  {node_name}:
+      image: mongo
+      command: mongod --keyFile /scripts/mongodb.key --port 27018 --shardsvr --replSet main_shard{shard} --bind_ip_all --setParameter maxIndexBuildMemoryUsageMegabytes=2000 --setParameter diagnosticDataCollectionEnabled=false --wiredTigerCacheSizeGB 5
+      volumes:
+        - ${mongo_script_dir}:/scripts
+        - ${dir_name}:/data/db:delegated
+      ulimits:
+        nproc: 65535
+        nofile:
+          soft: 100000
+          hard: 200000
+      networks:
+        - mongo_main
 '''
 
 

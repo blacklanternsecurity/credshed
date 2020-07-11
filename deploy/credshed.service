@@ -4,7 +4,7 @@ Requires=docker.service
 After=docker.service
 
 [Service]
-WorkingDirectory=/opt/credshed/credshed/docker
+WorkingDirectory=/opt/credshed/deploy
 ExecStart=/usr/local/bin/docker-compose up
 ExecStop=/usr/local/bin/docker-compose down
 

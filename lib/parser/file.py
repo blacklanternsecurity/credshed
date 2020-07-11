@@ -157,7 +157,12 @@ class File(type(pathlib.Path())):
         '''
         Tries to decode by magic type and falls back to simple binary read
         '''
-        with open(self, 'r', encoding=self.encoding) as f:
+        try:
+            try:
+                f = open(self, 'r', encoding=self.encoding)
+            except LookupError:
+                f = open(self, 'r', encoding='ascii')
+
             while 1:
                 # try detected encoding
                 try:
@@ -166,10 +171,11 @@ class File(type(pathlib.Path())):
                 # if that fails, convert to hex notation
                 except ValueError as e:
                     yield str(e.args[1].strip(b'\r\n'))[2:-1]
-                except LookupError:
-                    pass
                 except StopIteration:
                     break
+
+        finally:
+            f.close()
 
 
     def resolve(self):

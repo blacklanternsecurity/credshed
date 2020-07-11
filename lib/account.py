@@ -67,7 +67,10 @@ class Account():
         # truncate values to max length
         self.misc = misc[:self.max_length_2].strip()
         self.password = password[:self.max_length_1]
-        self.hashes = [h[:self.max_length_2] for h in hashes]
+        self.hashes = []
+        for h in hashes:
+            if h not in self.hashes:
+                self.hashes.append(h[:self.max_length_2])
         self.sources = sources
 
         # if username is an email address, do the needful
@@ -103,13 +106,12 @@ class Account():
             if not id_only:
                 if self._email:
                     doc['e'] = self._email
-                    doc['d'] = self.domain[::-1]
                 if self.username:
                     doc['u'] = self.username
                 if self.password:
                     doc['p'] = self.password
                 if self.hashes:
-                    doc['h'] = list(set(self.hashes))
+                    doc['h'] = self.hashes
                 if self.misc:
                     doc['m'] = self.misc
         except ValueError:
@@ -139,7 +141,7 @@ class Account():
     def from_document(cls, document):
 
         _email = document.get('e')
-        domain = document.get('d')
+        domain = document.get('_id').split('|')[0]
         if _email and domain:
             email = _email + '@' + domain[::-1]
         else:
@@ -164,12 +166,32 @@ class Account():
     @property
     def id(self):
         '''
-        sha1 is used for speed, collisions are *very* unlikely in datasets of this size
+        hacky compound domain-->email index
+        first 6 bytes of _id after the domain are a hash of the email
         '''
+
+        if not self._id:
+
+            if self._email:
+                # _id begins with reversed domain
+                domain_chunk = self.domain[::-1]
+                email_hash = base64.b64encode(hashlib.sha1(self._email.encode()).digest()[:6]).decode()
+                account_hash = email_hash + base64.b64encode(hashlib.sha256(self.bytes).digest()[:6]).decode()
+            else:
+                account_hash = base64.b64encode(hashlib.sha1(self.bytes).digest()[:12]).decode()
+                domain_chunk = ''
+
+            self._id = '|'.join([domain_chunk, account_hash])
+
+        return self._id
+
+        '''
+        # sha1 is used for speed, collisions are *very* unlikely in datasets of this size
 
         if not self._id:
             self._id = base64.b64encode(hashlib.sha256(self.bytes).digest())[:20].decode()
         return self._id
+        '''
 
 
     @property

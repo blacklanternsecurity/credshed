@@ -1,0 +1,25 @@
+version: '3'
+
+services:
+
+    mongo0:
+        image: mongo
+        # https://www.percona.com/blog/2020/05/05/tuning-mongodb-for-bulk-loads/
+        command: mongod --nojournal --port 27017 --bind_ip_all --setParameter maxIndexBuildMemoryUsageMegabytes=2000 --setParameter diagnosticDataCollectionEnabled=false --wiredTigerCacheSizeGB 200 --wiredTigerEngineConfigString "eviction=(threads_min=20,threads_max=20),checkpoint=(wait=1200),eviction_dirty_trigger=51,eviction_dirty_target=50,eviction_trigger=95,eviction_target=90"
+        ports:
+            - "127.0.0.1:27017:27017"
+        volumes:
+            - /mnt/md0/credshed.test:/data/db:delegated
+        environment:
+            - MONGO_INITDB_ROOT_USERNAME=root
+            - MONGO_INITDB_ROOT_PASSWORD=INTHENAMEOFALLTHATISHOLYPLEASECHANGETHIS
+        ulimits:
+            nproc: 65535
+            nofile:
+                soft: 100000
+                hard: 200000
+        networks:
+            - mongo
+
+networks:
+    mongo:

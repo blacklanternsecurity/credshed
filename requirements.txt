@@ -1,4 +1,4 @@
+pymongo
 requests
 matplotlib
 python-magic
-elasticsearch

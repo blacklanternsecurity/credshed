@@ -25,7 +25,16 @@ class CredShed():
 
     def __init__(self):
 
-        self.db = DB()
+        self._db = None
+
+
+    @property
+    def db(self):
+
+        if self._db is None:
+            self._db = DB()
+        return self._db
+    
 
 
     def search(self, query, query_type='email', limit=0):
