@@ -86,13 +86,14 @@ class FilestoreUtilError(CredShedUtilError):
 
 
 
-def log_error(e, max_length=10000):
+def log_error(e, max_length=10000, exclude=()):
     '''
     Log a short version of the error
     If debugging is enabled, log the entire traceback
+    excluded error types are only logged if debugging is enabled
     '''
 
     if log.level <= logging.DEBUG:
         log.error(format_exc()[:max_length])
-    else:
-        log.error(str(e)[:max_length])
+    elif not type(e) in exclude:
+        log.error(str(e)[:max_length] + ' (-v to debug)')

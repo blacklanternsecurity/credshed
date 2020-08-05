@@ -59,7 +59,7 @@ class ProcessPool:
                         process = self.pool[i]
                         if process is None or not process.is_alive():
                             self.pool[i] = mp.Process(target=self.execute, args=(func, self.result_queue, (entry,)+args), \
-                                kwargs=kwargs, daemon=self.daemon)
+                                kwargs=kwargs, daemon=self.daemon, name=str(entry))
                             self.pool[i].start()
                             self.started_counter += 1
                             log.debug(f'{self.name}: {self.started_counter:,} processes started')
@@ -78,13 +78,19 @@ class ProcessPool:
         # wait for processes to finish
         while 1:
 
+            for result in self.results:
+                yield result
+
             finished_threads = [p is None or not p.is_alive() for p in self.pool]
             if all(finished_threads):
                 self.finished_counter += len([p for p in self.pool if p is not None and not p.is_alive()])
                 break
             else:
-                log.debug(f'{self.name}: Waiting for {finished_threads.count(False):,} threads to finish')
-                sleep(1)
+                unfinished_threads = [p for p in self.pool if p is not None and p.is_alive()]
+                log.debug(f'{self.name}: Waiting for {len(unfinished_threads):,} threads to finish')
+                for thread in unfinished_threads:
+                    log.debug(f'    Thread "{thread.name}" is still running')
+                sleep(10)
 
         for result in self.results:
             yield result
@@ -113,8 +119,7 @@ class ProcessPool:
         try:
             result_queue.put(func(*args, **kwargs))
         except Exception as e:
-            if type(e) not in (FileNotFoundError, ConnectionResetError, BrokenPipeError):
-                log_error(e)
+            log_error(e, exclude=(OSError,))
         except KeyboardInterrupt:
             log.critical('Interrupted')
 

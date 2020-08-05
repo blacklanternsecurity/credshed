@@ -5,6 +5,7 @@
 import logging
 from copy import copy
 from pathlib import Path
+from datetime import datetime
 from multiprocessing import Queue
 from logging.handlers import QueueHandler, QueueListener
 
@@ -80,8 +81,10 @@ log_sender = QueueHandler(log_queue)
 root_logger.handlers = [log_sender]
 #root_logger.handlers = [console]
 
-filename = 'credshed.log'
-log_filename = str(Path('/var/log/credshed') / filename)
+logdir = Path('/var/log/credshed')
+date_str = datetime.now().strftime('%m-%d-%H-%f')
+filename = f'credshed_{date_str}.log'
+log_filename = str(logdir / filename)
 
 # use logging to log logging logs
 log = logging.getLogger('credshed.logger')
@@ -89,8 +92,10 @@ log = logging.getLogger('credshed.logger')
 try:
     file_handler = logging.FileHandler(log_filename)
 except (PermissionError, FileNotFoundError):
-    log.warning(f'Unable to create log file at {log_filename}, logging to current directory')
-    file_handler = logging.FileHandler(filename)
+    fallback_logdir = Path.home() / '.credshed' / 'logs'
+    fallback_logdir.mkdir(parents=True, exist_ok=True)
+    log.warning(f'Unable to create log file at {logdir}, logging to {fallback_logdir}')
+    file_handler = logging.FileHandler(fallback_logdir / filename)
 
 log_format = '%(asctime)s\t%(levelname)s\t%(name)s\t%(message)s'
 file_handler.setFormatter(logging.Formatter(log_format))

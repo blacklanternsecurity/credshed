@@ -28,7 +28,6 @@ def delete_dir(dirname):
 def list_files(path, include_symlinks=False):
 
     path = Path(path)
-    log.info(f'Finding files in {path}')
 
     if path.is_file():
         yield File(path)

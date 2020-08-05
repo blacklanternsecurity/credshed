@@ -157,9 +157,11 @@ class DB():
         if query_type == 'email':
             try:
                 email, domain = keyword.lower().split('@')[:2]
+                email, domain = Account.handle_special_email_cases(email, domain)
                 # _id begins with reversed domain
                 domain_chunk = re.escape(domain[::-1])
-                email_hash = decode(base64.b64encode(hashlib.sha256(encode(email)).digest()[:6]))
+                email_hash = base64.b64encode(hashlib.sha1(email.encode()).digest()[:6]).decode()
+                # email_hash = decode(base64.b64encode(hashlib.sha256(encode(email)).digest()[:6]))
                 query_str = domain_chunk + '\\|' +  re.escape(email_hash)
 
                 query_regex = rf'^{query_str}.*'
@@ -223,7 +225,6 @@ class DB():
 
         # create the source and get the source ID
         new_source = self.add_source(source, import_finished=False, force=force, client=client)
-        log.debug(f'New source: {str(new_source)}')
 
         account_stream = self.account_stream(
             source,
@@ -247,18 +248,18 @@ class DB():
 
                 seconds_elapsed = (seconds_end_time - seconds_start_time).total_seconds()
                 accounts_per_second = int(batch_size / seconds_elapsed)
-                if accounts_per_second < 200:
+                if accounts_per_second < 100:
                     log.warning(f'Detected significant throttling for {source.file.name}')
                     #sleep(300)
 
                 if (i != 0 ) and (i % progress_increment == 0):
                     minutes_elapsed = (datetime.now() - start_time).total_seconds() / 60
                     accounts_per_minute = int(100000 / minutes_elapsed)
-                    log.info(f'Import running at {accounts_per_minute:,} accounts per minute for {source.file}')
+                    log.info(f'Import running at {accounts_per_minute:,} accounts per minute for "{source.file}"')
                     start_time = datetime.now()
 
         else:
-            log.warning(f'Skipping {source.file.name}, already in database')
+            log.warning(f'Skipping file "{source.file}", already in database')
 
         # update counters, stats, etc.
         self.add_source(source, import_finished=True, force=force, client=client)
@@ -432,6 +433,7 @@ class DB():
                         sources.insert_one,
                         source_doc
                     )
+                    log.debug(f'new_source: {str(source_doc)}')
                     return source_doc
 
                 except pymongo.errors.DuplicateKeyError:
@@ -448,7 +450,7 @@ class DB():
 
         self._op(
             sources.update_one,
-            {'hash': source.hash}, {
+            {'_id': source.hash}, {
                 '$addToSet': {
                     'files': str(source.name)
                 },
@@ -468,11 +470,12 @@ class DB():
 
             self._op(
                 sources.update_one,
-                {'hash': source.hash}, {
+                {'_id': source.hash}, {
                     '$set': {
                         'top_domains': source.top_domains(100),
                         'top_misc_basewords': source.top_misc_basewords(100),
                         'top_password_basewords': source.top_password_basewords(100),
+                        'import_finished': True
                     }
                 }
             )
@@ -480,7 +483,7 @@ class DB():
         # refresh data
         refreshed_source = self._op(
             sources.find_one,
-            {'_id': source.id}
+            {'_id': source.hash}
         )
 
         if refreshed_source is None:

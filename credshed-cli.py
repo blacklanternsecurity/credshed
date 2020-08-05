@@ -82,29 +82,43 @@ class CredShedCLI(CredShed):
         print(super().db_stats())
 
 
-    def import_file(self, filename, options):
+    def import_file(self, file, options, magic_blacklist=None):
 
         try:
-            return super().import_file(
-                filename,
-                unattended=options.unattended,
-                force=options.force_ingest,
-                stdout=options.stdout,
-                force_ascii=False
-            )
 
-        except CredShedDatabaseError:
-            return super().import_file(
-                filename,
-                unattended=options.unattended,
-                force=options.force_ingest,
-                stdout=options.stdout,
-                force_ascii=True
-            )
+            if magic_blacklist is None:
+                magic_blacklist = [
+                    # PNG, JPEG, etc.
+                    'image data',
+                    # ZIP, GZ, etc.
+                    'archive data',
+                    # encrypted data
+                    'encrypted'
+                ]
+
+            # check magic type
+            magic_type = file.magic_type.lower()
+
+            if any([x in magic_type for x in magic_blacklist]):
+                log.debug(f'Skipping file of type "{file.magic_type}"')
+
+            else:
+
+                return super().import_file(
+                    file,
+                    unattended=options.unattended,
+                    force=options.force_ingest,
+                    stdout=options.stdout,
+                    force_ascii=False
+                )
 
         except KeyboardInterrupt:
             log.critical('Interrupted')
-            return (0,0)
+
+        except FileError as e:
+            log.warning(str(e))
+
+        return (0,0)
 
 
     def import_files(self):
@@ -129,42 +143,47 @@ class CredShedCLI(CredShed):
         total_file_count = len(filelist)
         log.info(f'Importing a total of {len(filelist):,} files')
 
+        # because yes
+        import random
+        random.shuffle(filelist)
+
         # if unattended, spawn processes like there's no tomorrow
-        if self.options.unattended and self.options.threads > 1:
+        if self.options.unattended:
 
             # we only parallelize files larger than 2MB
             parallelization_threshold_bytes = 2000000
 
             # because os.fork() is expensive
-            large_files = [f for f in filelist if f.size > parallelization_threshold_bytes]
-            filelist = [f for f in filelist if f.size <= parallelization_threshold_bytes]
+            #large_files = [f for f in filelist if f.size > parallelization_threshold_bytes]
+            #filelist = [f for f in filelist if f.size <= parallelization_threshold_bytes]
 
             # ensure total number of threads stay consistent
-            if large_files:
-                log.info(f'Importing {len(large_files):,} files using {self.options.threads:,} file threads')
+            #if large_files:
+            log.info(f'Importing {len(filelist):,} files using {self.options.threads:,} file threads')
 
-                with ProcessPool(self.options.threads, name='Import') as pool:
-                    for unique, total in pool.map(self.import_file, large_files, (self.options,)):
-                        processed_files += 1
-                        if total > 0:
-                            interesting_files += 1
-                        unique_accounts += unique
-                        total_accounts += total
+            with ProcessPool(self.options.threads, name='Import') as pool:
+                for unique, total in pool.map(self.import_file, filelist, (self.options,)):
+                    processed_files += 1
+                    if total > 0:
+                        interesting_files += 1
+                    unique_accounts += unique
+                    total_accounts += total
 
-                        progress_time = datetime.now()
-                        time_elapsed = (progress_time - major_start_time).total_seconds()
-                        log.info(
-                            'Imported {:,}/{:,}/{:,} files in {:02d}:{:02d}:{:02d}'.format(
-                                interesting_files,
-                                processed_files,
-                                total_file_count,
-                                int(time_elapsed // 3600),
-                                int((time_elapsed % 3600) // 60),
-                                int(time_elapsed % 60)
-                            )
+                    progress_time = datetime.now()
+                    time_elapsed = (progress_time - major_start_time).total_seconds()
+                    log.info(
+                        'Imported {:,}/{:,}/{:,} files in {:02d}:{:02d}:{:02d}'.format(
+                            interesting_files,
+                            processed_files,
+                            total_file_count,
+                            int(time_elapsed // 3600),
+                            int((time_elapsed % 3600) // 60),
+                            int(time_elapsed % 60)
                         )
+                    )
 
         # use normal Python threading for all the smaller files
+        '''
         if filelist:
             log.info(f'Importing {len(filelist):,} files using main thread')
             with concurrent.futures.ThreadPoolExecutor(max_workers=self.options.threads) as thread_pool:
@@ -189,6 +208,7 @@ class CredShedCLI(CredShed):
                             int(time_elapsed % 60)
                         )
                     )
+        '''
 
 
         end_time = datetime.now()

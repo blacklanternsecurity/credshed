@@ -9,7 +9,7 @@ from pathlib import Path
 from .filestore import *
 from .config import config
 from datetime import datetime
-from .validation import word_regex
+from .validation import word_regex, strip_hashes
 
 
 # set up logging
@@ -116,7 +116,7 @@ class Source():
                 self.domains[account.domain] = 1
 
         if account.password:
-            for word in word_regex.findall(account.password):
+            for word in word_regex.findall(strip_hashes(account.password)):
                 word = word.lower()
                 try:
                     self.password_basewords[word] += 1
@@ -124,7 +124,7 @@ class Source():
                     self.password_basewords[word] = 1
 
         if account.misc:
-            for word in word_regex.findall(account.misc):
+            for word in word_regex.findall(strip_hashes(account.misc)):
                 word = word.lower()
                 try:
                     self.misc_basewords[word] += 1

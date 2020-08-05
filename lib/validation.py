@@ -84,6 +84,14 @@ def find_hashes(s):
             yield match
 
 
+def strip_hashes(s):
+
+    for hash_regex in hash_regexes_str:
+        s = re.sub(hash_regex, '', s)
+
+    return s
+
+
 def validate_query_type(query, query_type='auto'):
     '''
     returns valid query type, autodetects if needed

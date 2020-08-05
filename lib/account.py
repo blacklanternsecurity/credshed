@@ -64,6 +64,9 @@ class Account():
         # remove single-quotes and backslashes from username
         self.username = username.strip().translate(self.strip_from_username)[:self.max_length_1]
 
+        # replace all whitespace with a single space in misc
+        misc = ' '.join(misc.split())
+
         # truncate values to max length
         self.misc = misc[:self.max_length_2].strip()
         self.password = password[:self.max_length_1]
@@ -135,6 +138,22 @@ class Account():
             raise AccountCreationError(f'Invalid email: {new_email}')
 
         self._email, self.domain = new_email.split('@', 1)
+        self._email, self.domain = self.handle_special_email_cases(self._email, self.domain)
+
+
+
+    @staticmethod
+    def handle_special_email_cases(email, domain):
+        '''
+        Handles special gmail email address tricks, etc.
+        '''
+
+        # handle gmail
+        if domain in ['gmail.com', 'googlemail.com']:
+            return (email.replace('.', '').split('+')[0], domain)
+        else:
+            return (email, domain)
+
 
 
     @classmethod
@@ -176,7 +195,7 @@ class Account():
                 # _id begins with reversed domain
                 domain_chunk = self.domain[::-1]
                 email_hash = base64.b64encode(hashlib.sha1(self._email.encode()).digest()[:6]).decode()
-                account_hash = email_hash + base64.b64encode(hashlib.sha256(self.bytes).digest()[:6]).decode()
+                account_hash = email_hash + base64.b64encode(hashlib.sha1(self.bytes).digest()[:6]).decode()
             else:
                 account_hash = base64.b64encode(hashlib.sha1(self.bytes).digest()[:12]).decode()
                 domain_chunk = ''

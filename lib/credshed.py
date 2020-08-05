@@ -92,7 +92,7 @@ class CredShed():
         Source(filename) --> Source.parse() --> db.add_accounts(source)
         '''
 
-        log.info(f'Parsing file {filename}')
+        log.info(f'Parsing file "{filename}"')
 
         start_time = datetime.now()
 

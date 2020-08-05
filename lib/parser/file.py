@@ -10,6 +10,8 @@ class File(type(pathlib.Path())):
     Given a filename, yield decoded lines
     '''
 
+    default_encoding = 'utf-8'
+
     def __new__(cls, filename, *args, **kwargs):
 
         if type(filename) == cls:
@@ -20,13 +22,12 @@ class File(type(pathlib.Path())):
         return f
 
 
-    def __init__(self, filename, force_ascii=False, parse=True):
+    def __init__(self, filename, parse=True):
 
         self._magic_type = None
         self._encoding = None
         self._size = None
         self._parse = parse
-        self._force_ascii = force_ascii
 
         self._hashes = dict()
 
@@ -135,44 +136,75 @@ class File(type(pathlib.Path())):
 
         # get magic type
         if self._magic_type is None:
-            self._magic_type = magic.from_buffer(head)
+            try:
+                self._magic_type = magic.from_buffer(head)
+            except magic.MagicException as e:
+                log_error(e)
+                self._magic_type = 'data'
             log.debug(f'Magic type of {self} is {self._magic_type}')
 
         # get encoding
         if self._encoding is None:
-            if self._force_ascii:
-                self._encoding = 'ascii'
-            else:
-                # detect encoding with libmagic
-                m = magic.Magic(mime_encoding=True)
+            # detect encoding with libmagic
+            m = magic.Magic(mime_encoding=True)
+            try:
                 self._encoding = m.from_buffer(head)
+            except magic.MagicException as e:
+                self._encoding = 'binary'
 
             # fall back to utf-8 if encoding can't be detected
-            if (not self._force_ascii) and (self._encoding == 'binary' or self._encoding.endswith('ascii')):
-                self._encoding = 'utf-8'
+            if self._encoding == 'binary' or self._encoding.endswith('ascii'):
+                self._encoding = self.default_encoding
             log.debug(f'Encoding of {self} is {self._encoding}')
 
 
     def _read_file(self):
         '''
-        Tries to decode by magic type and falls back to simple binary read
+        Tries to decode by magic type and falls back to ascii
         '''
+
+        decoding_errors = 0
+
         try:
             try:
-                f = open(self, 'r', encoding=self.encoding)
+                f = open(self, 'r', encoding=self.encoding, errors='backslashreplace')
             except LookupError:
-                f = open(self, 'r', encoding='ascii')
+                f = open(self, 'r', encoding=self.default_encoding, errors='backslashreplace')
 
+            for line in f:
+                yield line.strip('\r\n\t')
+
+            '''
             while 1:
                 # try detected encoding
                 try:
-                    yield next(f).strip('\r\n')
+                    #log.debug('Splitting lines (string)')
+                    for line in f:
+                        yield line
 
                 # if that fails, convert to hex notation
                 except ValueError as e:
-                    yield str(e.args[1].strip(b'\r\n'))[2:-1]
+
+                    log.error(str(e.object)[:40] + ': ' + str(self))
+                    #log.error(e)
+                    #log.error(e.args)
+                    #log_error(e)
+
+                    # this handles an infinite loop bug in Python's unicode libraries
+                    if len(e.object) >= 1 and e.object[0] > 127:
+                        decoding_errors += 1
+                        if decoding_errors > 10000:
+                            break
+                    else:
+                        decoding_errors = 0
+
+                    #log.debug('Splitting lines (bytes)')
+                    for line in e.object.splitlines():
+                        yield str(line)[2:-1]
+
                 except StopIteration:
                     break
+            '''
 
         finally:
             f.close()

@@ -6,7 +6,7 @@ from os import sysconf
 from pathlib import Path
 from multiprocessing import cpu_count
 
-credshed_path = Path(__file__).resolve().parent.parent.parent
+credshed_path = Path(__file__).resolve().parent.parent
 sys.path.append(str(credshed_path))
 from lib.config import config
 
@@ -81,7 +81,7 @@ mongo_data_template = '''
 if __name__ == '__main__':
 
     # number of elastic nodes
-    num_nodes = int(config['CREDSHED']['nodes'])
+    num_nodes = int(config['MONGO']['nodes'])
     # number of CPU cores
     cpus = cpu_count()
     # amount of memory
@@ -99,18 +99,18 @@ if __name__ == '__main__':
     mem_per_node = max(4, min(25, int(elastic_mem / options.nodes)+1))
     #cpus_per_node = max(4, int(options.cpus / options.nodes * 2)+1)
     cpus_per_node = int(options.cpus / 2)
-    index_mem_per_node = max(1024, min((mem_per_node*1024)*.66, int(512 * (int(config['CREDSHED']['shards']) / options.nodes))))
+    index_mem_per_node = max(1024, min((mem_per_node*1024)*.66, int(512 * (int(config['MONGO']['shards']) / options.nodes))))
 
     base_node_name = 'es_'
     master_node_name = f'{base_node_name}master'
 
     if options.mkdir:
-        master_data_dir = Path(config['CREDSHED']['data_dir']) / master_node_name
+        master_data_dir = Path(config['MONGO']['data_dir']) / master_node_name
         print(f'Creating {master_data_dir}')
         master_data_dir.mkdir(parents=True, exist_ok=True)
         for i in range(1, options.nodes+1):
             data_node_name = f'{base_node_name}{i}'
-            node_data_dir = Path(config['CREDSHED']['data_dir']) / data_node_name
+            node_data_dir = Path(config['MONGO']['data_dir']) / data_node_name
             print(f'Creating {node_data_dir}')
             node_data_dir.mkdir(parents=True, exist_ok=True)
 
@@ -119,9 +119,9 @@ if __name__ == '__main__':
             node_name=master_node_name,
             cpus=cpus_per_node,
             mem=mem_per_node,
-            data_dir=config['CREDSHED']['data_dir'],
-            username=config['CREDSHED']['username'],
-            password=config['CREDSHED']['password']
+            data_dir=config['MONGO']['data_dir'],
+            username=config['MONGO']['username'],
+            password=config['MONGO']['password']
         )
 
         data_nodes = []
@@ -136,16 +136,16 @@ if __name__ == '__main__':
                 cpus=cpus_per_node,
                 mem=mem_per_node,
                 index_mem=index_mem_per_node,
-                data_dir=config['CREDSHED']['data_dir'],
-                username=config['CREDSHED']['username'],
-                password=config['CREDSHED']['password']
+                data_dir=config['MONGO']['data_dir'],
+                username=config['MONGO']['username'],
+                password=config['MONGO']['password']
             ))
 
         kibana_node = kibana_node_template.format(
             master_node_name=master_node_name,
             data_node_list='\n      - '.join(data_node_list),
-            username=config['CREDSHED']['username'],
-            password=config['CREDSHED']['password']
+            username=config['MONGO']['username'],
+            password=config['MONGO']['password']
         )
 
         docker_compose_file = docker_compose_template.format(

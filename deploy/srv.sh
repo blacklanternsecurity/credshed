@@ -129,19 +129,20 @@ services:" | tee -a docker-compose.yml | fgrep -v MONGO_INITDB_ROOT
     echo "
     router:
         image: mongo
-        command: mongos --keyFile /scripts/mongodb.key --port 27017 --configdb configserver/config0:27017,configserver/config1:27017 --setParameter taskExecutorPoolSize=0 --setParameter ShardingTaskExecutorPoolMinSize=10 --setParameter ShardingTaskExecutorPoolMaxConnecting=50 --bind_ip_all
+        command: mongos --keyFile /scripts/mongodb.key --port 27017 --configdb configserver/config0:27017 --setParameter taskExecutorPoolSize=0 --setParameter ShardingTaskExecutorPoolMinSize=10 --setParameter ShardingTaskExecutorPoolMaxConnecting=50 --bind_ip_all
         ports:
             - \"127.0.0.1:27017:27017\"
         volumes:
             - ${script_dir}:/scripts
         ulimits:
-            nproc: 65535
-            nofile:
-                soft: 100000
-                hard: 200000
+            nproc: 64000
+            nofile: 64000
+            memlock: -1
+            fsize: -1
+            cpu: -1
+            as: -1
         depends_on:
-            - config0
-            - config1" | tee -a docker-compose.yml
+            - config0" | tee -a docker-compose.yml
     for shard in $(seq 1 $num_shards)
     do
         echo "            - shard${shard}a" | tee -a docker-compose.yml
@@ -160,18 +161,13 @@ services:" | tee -a docker-compose.yml | fgrep -v MONGO_INITDB_ROOT
         environment:
             - MONGO_INITDB_ROOT_USERNAME=${mongo_user}
             - MONGO_INITDB_ROOT_PASSWORD=${mongo_pass}
-        networks:
-            - mongo
-
-    config1:
-        image: mongo
-        command: mongod --keyFile /scripts/mongodb.key --port 27017 --configsvr --replSet configserver --bind_ip_all
-        volumes:
-            - ${script_dir}:/scripts
-            - ${db_dir}/mongo_config_1:/data/configdb:delegated
-        environment:
-            - MONGO_INITDB_ROOT_USERNAME=${mongo_user}
-            - MONGO_INITDB_ROOT_PASSWORD=${mongo_pass}
+        ulimits:
+            nproc: 64000
+            nofile: 64000
+            memlock: -1
+            fsize: -1
+            cpu: -1
+            as: -1
         networks:
             - mongo" | tee -a docker-compose.yml
 
@@ -197,15 +193,17 @@ services:" | tee -a docker-compose.yml | fgrep -v MONGO_INITDB_ROOT
         echo "
     shard${shard}a:
         image: mongo
-        command: mongod --keyFile /scripts/mongodb.key --port 27018 --shardsvr --replSet shard${shard} --bind_ip_all --setParameter maxIndexBuildMemoryUsageMegabytes=2000 --setParameter diagnosticDataCollectionEnabled=false --wiredTigerCacheSizeGB 20
+        command: mongod --keyFile /scripts/mongodb.key --port 27018 --shardsvr --replSet shard${shard} --bind_ip_all --setParameter maxIndexBuildMemoryUsageMegabytes=2000 --setParameter diagnosticDataCollectionEnabled=false --wiredTigerCacheSizeGB 2
         volumes:
             - ${script_dir}:/scripts
             - ${dir_name}:/data/db:delegated
         ulimits:
-            nproc: 65535
-            nofile:
-                soft: 100000
-                hard: 200000
+            nproc: 64000
+            nofile: 64000
+            memlock: -1
+            fsize: -1
+            cpu: -1
+            as: -1
         networks:
             - mongo" | tee -a docker-compose.yml
     done
@@ -248,8 +246,7 @@ build_mongo_config_scripts()
     configsvr: true,
     version: 1,
     members: [
-        { _id: 0, host : \"config0:27017\" },
-        { _id: 0, host : \"config1:27017\" }
+        { _id: 0, host : \"config0:27017\" }
 ] } )" | sudo tee "${script_dir}/init_configserver.js"
 
 }
@@ -312,7 +309,7 @@ init_shards()
 
     # initialize config server for primary database
     sudo docker-compose exec config0 sh -c "mongo -u ${mongo_user} -p ${mongo_pass} --port 27017 < /scripts/init_configserver.js"
-    sudo docker-compose exec config1 sh -c "mongo -u ${mongo_user} -p ${mongo_pass} --port 27017 < /scripts/init_configserver.js"
+    #sudo docker-compose exec config1 sh -c "mongo -u ${mongo_user} -p ${mongo_pass} --port 27017 < /scripts/init_configserver.js"
 
     # give config servers some time
     sleep 15
@@ -399,6 +396,17 @@ if [ $# -eq 0 ]
 then
     usage
 fi
+
+
+# set ulimits (mongo will probably crash without these)
+# TODO: set these in docker
+sudo ulimit -f unlimited
+sudo ulimit -t unlimited
+sudo ulimit -v unlimited
+sudo ulimit -m unlimited
+sudo ulimit -l unlimited
+sudo ulimit -u 64000
+sudo ulimit -n 64000
 
 
 while :
@@ -495,7 +503,7 @@ fi
 if [ -n "$do_init_shards" ]
 then
     printf 'Sleeping for 60 seconds (a very long time is needed before the config server will respond)\n'
-    sleep 60
+    sleep 30
     init_shards
 fi
 

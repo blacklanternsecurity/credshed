@@ -69,22 +69,11 @@ def number_range(s):
     return n_array
 
 
-def recursive_file_list(paths, magic_blacklist=None, min_size=6):
+def recursive_file_list(paths, min_size=6):
     '''
     accepts single or multiple files/directories
-    yields filenames
-    compressed = whether or not to include compressed files
+    yields file objects
     '''
-
-    if magic_blacklist is None:
-        magic_blacklist = [
-            # PNG, JPEG, etc.
-            'image data',
-            # ZIP, GZ, etc.
-            'archive data',
-            # encrypted data
-            'encrypted'
-        ]
 
     if not type(paths) == list:
         paths = [paths]
@@ -93,28 +82,19 @@ def recursive_file_list(paths, magic_blacklist=None, min_size=6):
 
     for path in paths:
 
+        log.info(f'Finding files in {path}')
         files = list(filestore.util.list_files(path))
+        log.info(f'Found {len(files):,} files in {path}')
+
+        average_file_size = bytes_to_human(sum([file.size for file in files]) / len(files))
+        log.info(f'Average file size: {average_file_size}')
 
         for i, file in enumerate(files):
-
-            # check magic type
-            try:
-                magic_type = file.magic_type.lower()
-            except FileError as e:
-                log.warning(str(e))
-                continue
-
-            if any([x in magic_type for x in magic_blacklist]):
-                log.debug(f'Skipping file of type "{file.magic_type}"')
-                continue
 
             # check size
             if file.size < min_size:
                 log.debug(f'Skipping tiny/empty file "{file}"')
                 continue
-
-            if i % 1000 == 0:
-                log.info(f'Retrieved magic type from {i:,} / {len(files):,} files')
 
             yield file
 
