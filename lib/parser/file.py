@@ -167,11 +167,11 @@ class File(type(pathlib.Path())):
 
         try:
             try:
-                f = open(self, 'r', encoding=self.encoding, errors='backslashreplace')
+                self._f = open(self, 'r', encoding=self.encoding, errors='backslashreplace')
             except LookupError:
-                f = open(self, 'r', encoding=self.default_encoding, errors='backslashreplace')
+                self._f = open(self, 'r', encoding=self.default_encoding, errors='backslashreplace')
 
-            for line in f:
+            for line in self._f:
                 yield line.strip('\r\n\t')
 
             '''
@@ -207,7 +207,7 @@ class File(type(pathlib.Path())):
             '''
 
         finally:
-            f.close()
+            self._f.close()
 
 
     def resolve(self):

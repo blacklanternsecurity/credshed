@@ -3,6 +3,8 @@
 # by TheTechromancer
 
 import re
+import sys
+import unicodedata
 from .errors import *
 from base64 import b64decode
 from binascii import Error as Base64Error
@@ -34,7 +36,26 @@ hash_regexes = [
 hash_regexes_str   = [re.compile(r, re.I) for r in hash_regexes]
 
 # valid characters for email addresses
-email_charset = 'abcdefghijklmnopqrstuvwxyz0123456789-_.+@'
+email_chars_re = re.compile(r'[^abcdefghijklmnopqrstuvwxyz0123456789\.@_\-\+]')
+
+all_chars = (chr(i) for i in range(sys.maxunicode))
+categories = {'L', 'M', 'N', 'P', 'S'}
+good_chars = ''.join(c for c in all_chars if unicodedata.category(c) in categories)
+utf_chars_re = re.compile(f'^[ {re.escape(good_chars)}]')
+sep_chars_re = re.compile(r'\s+')
+def clean_utf(s, allow_whitespace=True):
+    '''
+    Remove all non-printable characters and all whitespace except for spaces
+    '''
+    if allow_whitespace:
+        return utf_chars_re.sub('', sep_chars_re.sub(' ', s))
+    else:
+        return utf_chars_re.sub('', sep_chars_re.sub('', s))
+
+
+def clean_email(s):
+
+    return email_chars_re.sub('', s)
 
 
 def is_domain(domain):
@@ -89,6 +110,13 @@ def strip_hashes(s):
     for hash_regex in hash_regexes_str:
         s = re.sub(hash_regex, '', s)
 
+    return s
+
+
+def strip_emails(s):
+
+    s = re.sub(email_regex_search, '', s)
+    
     return s
 
 

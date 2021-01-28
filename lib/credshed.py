@@ -63,7 +63,7 @@ class CredShed():
         self.db.drop()
 
 
-    def query_stats(self, query, query_type='domain', limit=10):
+    def query_stats(self, query, query_type='domain', limit=100):
 
         # go get the raw data (source_id: num_accounts)
         stats = self.db.query_stats(query, query_type)

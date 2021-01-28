@@ -3,6 +3,7 @@
 # by TheTechromancer
 
 import sys
+import math
 import logging
 import argparse
 from lib import logger
@@ -21,6 +22,33 @@ from lib.filestore import util as filestore_util
 
 # set up logging
 log = logging.getLogger('credshed.cli')
+
+
+def zip_filelist(l):
+    '''
+    alternates large and small files
+    e.g. [1,2,3,4,5] --> [1,5,2,4,3]
+    '''
+
+    l.sort(key=lambda x: x.size, reverse=True)
+    zipped_filelist = []
+    half_len = int(len(l)/2)
+    slice1 = l[half_len:]
+    slice2 = l[:half_len]
+    slice1.sort(key=lambda x: x.size)
+
+    for i in range(half_len+1):
+        try:
+            zipped_filelist.append(slice1[i])
+        except IndexError:
+            pass
+        try:
+            zipped_filelist.append(slice2[i])
+        except IndexError:
+            pass
+
+    return zipped_filelist
+
 
 
 class CredShedCLI(CredShed):
@@ -83,6 +111,26 @@ class CredShedCLI(CredShed):
 
 
     def import_file(self, file, options, magic_blacklist=None):
+        '''
+        mongo seems to crash when importing one of these files:
+            - "/mnt/synology_4bay/extracted/auto/bigDB.torrent/Database Collection/1.txt"
+            - "/mnt/synology_4bay/extracted/auto/bigDB.torrent/Trading Collection/123к.txt"
+            - "/mnt/synology_4bay/extracted/auto/bigDB.torrent/BTC Collection/20 (1).txt"
+            - "/mnt/synology_4bay/extracted/auto/bigDB.torrent/BTC Collection/5 (2).txt"
+            - "/mnt/synology_4bay/extracted/auto/bigDB.torrent/BTC Collection/21 (1).txt"
+            - "/mnt/synology_4bay/extracted/auto/bigDB.torrent/BTC Collection/19 (1).txt"
+            - "/mnt/synology_4bay/extracted/auto/bigDB.torrent/bigDB"
+            - "/mnt/synology_4bay/extracted/auto/bigDB.torrent/Region Specific Collection/RU/RU (1).txt"
+            - "/mnt/synology_4bay/extracted/auto/bigDB.torrent/BTC Collection/9 (1).txt"
+            - "/mnt/synology_4bay/extracted/auto/bigDB.torrent/UPDATES/#5 November 17th 2018/Region Specific/ 2018-11-17 08-04-33[.ru].txt"
+
+            - "/mnt/synology_4bay/extracted/auto/Collection #2-#5 & Antipublic.torrent/AP MYR & ZABUGOR #2_EU + RUSSIAN ANTIPUBLIC.tar.gz.extracted/AP MYR & ZABUGOR #2_EU + RUSSIAN ANTIPUBLIC/5.txt"
+            - "/mnt/synology_4bay/extracted/auto/Collection #2-#5 & Antipublic.torrent/Collection #2_New combo cloud_Trading Collection.tar.gz.extracted/Collection #2_New combo cloud_Trading Collection/123к.txt"
+            - "/mnt/synology_4bay/extracted/auto/Collection #2-#5 & Antipublic.torrent/AP MYR & ZABUGOR #2_EU + RUSSIAN ANTIPUBLIC.tar.gz.extracted/AP MYR & ZABUGOR #2_EU + RUSSIAN ANTIPUBLIC/19.txt"
+            - "/mnt/synology_4bay/extracted/auto/Collection #2-#5 & Antipublic.torrent/Collection #2_New combo cloud_Streaming Collection.tar.gz.extracted/Collection #2_New combo cloud_Streaming Collection/Private_merge.txt"
+            - "/mnt/synology_4bay/extracted/auto/Collection #2-#5 & Antipublic.torrent/Collection #2_New combo cloud_UPDATES_November 4th 2018_Update Dumps.tar.gz.extracted/Collection #2_New combo cloud_UPDATES_November 4th 2018_Update Dumps/rkpsorioin.yhteystietopalvelu.com {3.737} [HASH+NOHASH].rar.extracted/Rejected.txt"
+
+        '''
 
         try:
 
@@ -143,19 +191,15 @@ class CredShedCLI(CredShed):
         total_file_count = len(filelist)
         log.info(f'Importing a total of {len(filelist):,} files')
 
-        # because yes
-        import random
-        random.shuffle(filelist)
+        # alternate large and small files
+        filelist = zip_filelist(filelist)
+        #filelist.sort(key=lambda x: x.size, reverse=True)
+        #import random
+        #random.shuffle(filelist)
+
 
         # if unattended, spawn processes like there's no tomorrow
         if self.options.unattended:
-
-            # we only parallelize files larger than 2MB
-            parallelization_threshold_bytes = 2000000
-
-            # because os.fork() is expensive
-            #large_files = [f for f in filelist if f.size > parallelization_threshold_bytes]
-            #filelist = [f for f in filelist if f.size <= parallelization_threshold_bytes]
 
             # ensure total number of threads stay consistent
             #if large_files:
@@ -182,33 +226,26 @@ class CredShedCLI(CredShed):
                         )
                     )
 
-        # use normal Python threading for all the smaller files
-        '''
-        if filelist:
-            log.info(f'Importing {len(filelist):,} files using main thread')
-            with concurrent.futures.ThreadPoolExecutor(max_workers=self.options.threads) as thread_pool:
-                results = [thread_pool.submit(self.import_file, filename, options) for filename in filelist]
-                for result in concurrent.futures.as_completed(results):
-                    unique,total = result.result()
-                    processed_files += 1
-                    if total > 0:
-                        interesting_files += 1
-                    unique_accounts += unique
-                    total_accounts += total
+        else:
+            for file in filelist:
+                unique, total = self.import_file(file, self.options)
 
-                    progress_time = datetime.now()
-                    time_elapsed = (progress_time - major_start_time).total_seconds()
-                    log.info(
-                        'Imported {:,}/{:,}/{:,} files in {:02d}:{:02d}:{:02d}'.format(
-                            interesting_files,
-                            processed_files,
-                            total_file_count,
-                            int(time_elapsed // 3600),
-                            int((time_elapsed % 3600) // 60),
-                            int(time_elapsed % 60)
-                        )
+                processed_files += 1
+                if total > 0:
+                    interesting_files += 1
+                unique_accounts += unique
+                total_accounts += total
+
+                progress_time = datetime.now()
+                time_elapsed = (progress_time - major_start_time).total_seconds()
+                log.info(
+                    'Imported {} in {:02d}:{:02d}:{:02d}'.format(
+                        str(file),
+                        int(time_elapsed // 3600),
+                        int((time_elapsed % 3600) // 60),
+                        int(time_elapsed % 60)
                     )
-        '''
+                )
 
 
         end_time = datetime.now()

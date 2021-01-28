@@ -8,33 +8,6 @@ from . import validation
 
 
 
-class AccountMetadata():
-
-    def __init__(self, sources):
-
-        self.sources = sources
-
-
-    def __str__(self):
-
-        s = ''
-        s += '\n'.join([' |- {}'.format(str(source)) for source in self.sources])
-        return s
-
-
-    def __iter__(self):
-
-        for source in self.sources:
-            yield source
-
-
-    def __len__(self):
-
-        return len(self.sources)
-
-
-
-
 class Account():
 
     # cut down on memory usage by not using a dictionary
@@ -50,6 +23,7 @@ class Account():
 
     def __init__(self, email='', username='', password='', hashes=[], misc='', sources=[]):
 
+        # validate types
         if type(hashes) == str:
             hashes = [hashes]
         if type(sources) in (str, int):
@@ -57,24 +31,33 @@ class Account():
         else:
             sources = [int(s) for s in sources]
 
+        # sanitize
+        email    = validation.clean_utf(email)
+        username = validation.clean_utf(username)
+        password = validation.clean_utf(password)
+        hashes   = [validation.clean_utf(h) for h in hashes]
+        misc     = validation.clean_utf(misc)
+
+        # initialize variables
         self._id = ''
+        self._email = ''
+        self.username = ''
+        self.password = ''
+        self.misc = ''
+        self.hashes = []
+        self.sources = sources
 
         self.set_email(email)
 
-        # remove single-quotes and backslashes from username
+        # sanitize username
         self.username = username.strip().translate(self.strip_from_username)[:self.max_length_1]
 
-        # replace all whitespace with a single space in misc
-        misc = ' '.join(misc.split())
-
         # truncate values to max length
-        self.misc = misc[:self.max_length_2].strip()
+        self.misc = misc[:self.max_length_2]
         self.password = password[:self.max_length_1]
-        self.hashes = []
         for h in hashes:
             if h not in self.hashes:
                 self.hashes.append(h[:self.max_length_2])
-        self.sources = sources
 
         # if username is an email address, do the needful
         if not self._email:
@@ -101,6 +84,9 @@ class Account():
 
     @property
     def document(self, id_only=False):
+        '''
+        Returns dictionary in database format
+        '''
 
         doc = dict()
 
@@ -123,17 +109,26 @@ class Account():
         return doc
 
 
+    @property
+    def json(self):
+        '''
+        Returns dictionary in human-friendly format
+        '''
+        j = dict()
+        j['e'] = self.email
+        j['u'] = self.username
+        j['p'] = self.password
+        j['h'] = self.hashes
+        j['m'] = self.misc
+        j['s'] = self.sources
+        return j
+    
+
+
     def set_email(self, email):
 
         self._email = ''
-        email = email.lower()
-        new_email = []
-        for i in range(len(email)):
-            c = email[i:i+1]
-            if c in validation.email_charset:
-                new_email.append(c)
-
-        new_email = ''.join(new_email[-self.max_length_1:])
+        new_email = validation.clean_email(email)[-self.max_length_1:]
         if not validation.is_email(new_email):
             raise AccountCreationError(f'Invalid email: {new_email}')
 

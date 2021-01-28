@@ -9,7 +9,8 @@ from pathlib import Path
 from .filestore import *
 from .config import config
 from datetime import datetime
-from .validation import word_regex, strip_hashes
+from .parser.file import File
+from .validation import word_regex
 
 
 # set up logging
@@ -39,7 +40,9 @@ class Source():
 
         try:
             c = cls(doc.pop('filename'), name=doc.pop('name'), filesize=doc.pop('filesize'))
-            c.update(doc)
+            #c.update(doc)
+            for k,v in doc.items():
+                setattr(c,k,v)
             return c
         except (KeyError, IndexError) as e:
             raise CredShedSourceError(f'Failed to create Source object from db: {e}')
@@ -51,7 +54,7 @@ class Source():
         self.id = None
 
         # filename from which accounts are extracted
-        self.file = file
+        self.file = File(file)
         if name is None:
             self.name = str(self.file)
         else:
@@ -116,7 +119,7 @@ class Source():
                 self.domains[account.domain] = 1
 
         if account.password:
-            for word in word_regex.findall(strip_hashes(account.password)):
+            for word in word_regex.findall(account.password):
                 word = word.lower()
                 try:
                     self.password_basewords[word] += 1
@@ -124,7 +127,7 @@ class Source():
                     self.password_basewords[word] = 1
 
         if account.misc:
-            for word in word_regex.findall(strip_hashes(account.misc)):
+            for word in word_regex.findall(account.misc):
                 word = word.lower()
                 try:
                     self.misc_basewords[word] += 1
@@ -148,6 +151,15 @@ class Source():
 
         sorted_words = dict(sorted(self.misc_basewords.items(), key=lambda x: x[1], reverse=True)[:limit])
         return {w: c for w,c in sorted_words.items()}
+
+
+    @property
+    def progress(self):
+
+        try:
+            return f'{self.total_accounts:,} / {bytes_to_human(self._accounts.file.size)}'
+        except (NameError, AttributeError, TypeError):
+            return f'{self.total_accounts:,}'
 
 
     def __iter__(self):

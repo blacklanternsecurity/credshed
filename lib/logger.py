@@ -82,11 +82,11 @@ root_logger.handlers = [log_sender]
 #root_logger.handlers = [console]
 
 logdir = Path('/var/log/credshed')
-date_str = datetime.now().strftime('%m-%d-%H-%f')
+date_str = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
 filename = f'credshed_{date_str}.log'
 log_filename = str(logdir / filename)
 
-# use logging to log logging logs
+# use logging to log logger logs
 log = logging.getLogger('credshed.logger')
 
 try:
@@ -94,7 +94,7 @@ try:
 except (PermissionError, FileNotFoundError):
     fallback_logdir = Path.home() / '.credshed' / 'logs'
     fallback_logdir.mkdir(parents=True, exist_ok=True)
-    log.warning(f'Unable to create log file at {logdir}, logging to {fallback_logdir}')
+    log.debug(f'Unable to create log file at {logdir}, logging to {fallback_logdir}')
     file_handler = logging.FileHandler(fallback_logdir / filename)
 
 log_format = '%(asctime)s\t%(levelname)s\t%(name)s\t%(message)s'

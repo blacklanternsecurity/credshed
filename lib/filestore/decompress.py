@@ -97,6 +97,14 @@ class Decompress(ShellScript):
         '.xlsx'
     ]
 
+    # common archive passwords to try
+    passwords = [
+        '', # no password
+        'raidforums.com', # raidforums
+        'rf.ws', # raidforums
+        'KLub8pT&iU$8oBY(*$NOiu' # myspace
+    ]
+
     def __init__(self, file):
 
         super().__init__()

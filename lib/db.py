@@ -10,6 +10,7 @@ from . import logger
 from .errors import *
 from .source import *
 from .account import *
+from time import sleep
 from . import validation
 from .config import config
 from datetime import datetime
@@ -45,6 +46,7 @@ class DB():
         self.sources = self.db.sources
 
         # create indexes
+        self.sources.create_index([('source_id', pymongo.ASCENDING)], unique=True)
         #self.sources.create_index([('source_id', pymongo.ASCENDING)], background=True)
         #self.accounts.create_index([('u', pymongo.ASCENDING)], sparse=True, background=True)
         #self.accounts.create_index([('e', pymongo.ASCENDING)], sparse=True, background=True)
@@ -85,7 +87,8 @@ class DB():
 
         for result in self._op(
                 self.accounts.find,
-                query
+                query,
+                limit=limit
             ):
             try:
                 account = Account.from_document(result)
@@ -120,6 +123,20 @@ class DB():
             raise CredShedDatabaseError(error_detail(e))
 
         return int(num_accounts_in_db)
+
+
+
+    def source_count(self):
+
+        try:
+            collstats = self.db.command('collstats', 'sources', scale=1048576)
+            num_sources_in_db = collstats['count']
+        except KeyError:
+            num_sources_in_db = 0
+        except pymongo.errors.PyMongoError as e:
+            raise CredShedDatabaseError(error_detail(e))
+
+        return int(num_sources_in_db)
 
 
 
@@ -224,7 +241,10 @@ class DB():
             return
 
         # create the source and get the source ID
-        new_source = self.add_source(source, import_finished=False, force=force, client=client)
+        try:
+            new_source = self.add_source(source, import_finished=False, force=force, client=client)
+        except AlreadyInProgressError:
+            return
 
         account_stream = self.account_stream(
             source,
@@ -248,14 +268,14 @@ class DB():
 
                 seconds_elapsed = (seconds_end_time - seconds_start_time).total_seconds()
                 accounts_per_second = int(batch_size / seconds_elapsed)
-                if accounts_per_second < 100:
-                    log.warning(f'Detected significant throttling for {source.file.name}')
-                    #sleep(300)
+                #if accounts_per_second < 100:
+                #    log.warning(f'Detected significant throttling for {source.file.name}')
+                #    #sleep(300)
 
                 if (i != 0 ) and (i % progress_increment == 0):
                     minutes_elapsed = (datetime.now() - start_time).total_seconds() / 60
                     accounts_per_minute = int(100000 / minutes_elapsed)
-                    log.info(f'Import running at {accounts_per_minute:,} accounts per minute for "{source.file}"')
+                    log.info(f'Progress: {source.progress} ({accounts_per_minute:,} accounts per minute) for "{source.file}"')
                     start_time = datetime.now()
 
         else:
@@ -270,22 +290,20 @@ class DB():
         '''
         automatically retries, handling pymongo errors
         '''
-        tries = kwargs.pop('tries', 10)
-        error = None
 
-        for attempt in range(tries):
+        while 1:
             try:
-
                 return func(*args, **kwargs)
+
+            except pymongo.errors.DuplicateKeyError:
+                raise
 
             except pymongo.errors.PyMongoError as e:
                 log.error('Encountered error in DB._op()')
                 log.error(error_detail(e))
-                if attempt+1 >= tries:
-                    raise CredShedDatabaseError(e)
-                else:
-                    log.error('Retrying...')
-                    continue
+                log.error('Retrying in 30 seconds...')
+                sleep(30)
+                continue
 
 
 
@@ -372,7 +390,7 @@ class DB():
         return accounts_deleted
 
 
-    def add_source(self, source, import_finished=False, force=False, client=None):
+    def add_source(self, source, import_finished=False, force=False, client=None, already_in_progress=False):
         '''
         Inserts source details such as name, description, hash, etc.
         Returns new or existing Leak ID
@@ -436,10 +454,15 @@ class DB():
                     log.debug(f'new_source: {str(source_doc)}')
                     return source_doc
 
-                except pymongo.errors.DuplicateKeyError:
-                    source.id += 1
-                    source_doc['source_id'] = source.id
-                    continue
+                except pymongo.errors.DuplicateKeyError as e:
+                    # this happens because we sort by size
+                    if '_id_ dup key' in e.details['errmsg']:
+                        sleep(1)
+                        return self.add_source(source, import_finished, force, client, already_in_progress=True)
+                    else:
+                        source.id += 1
+                        source_doc['source_id'] = source.id
+                        continue
 
                 except pymongo.errors.PyMongoError as e:
                     raise CredShedDatabaseError(error_detail(e))
@@ -463,6 +486,9 @@ class DB():
                 }
             }
         )
+
+        if already_in_progress and not force:
+            raise AlreadyInProgressError(f'Import for {source.file} is already in progress')
 
         # only update these if import finished successfully
         # this prevents messing up existing data when cancelling an import operation
@@ -508,7 +534,7 @@ class DB():
                 self.sources.find,
                 {},
                 {'source_id': 1},
-                sort=[('_id', -1)],
+                sort=[('source_id', -1)],
                 limit=1)
             )['source_id']
         except StopIteration:
@@ -520,7 +546,7 @@ class DB():
     def get_source(self, source_id):
 
         try:
-            doc = self.sources.find_one({'_id': int(source_id)})
+            doc = self.sources.find_one({'source_id': int(source_id)})
             if doc:
                 return Source.from_doc(doc)
             else:

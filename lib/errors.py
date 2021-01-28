@@ -25,6 +25,9 @@ class CredShedMetadataError(CredShedError):
 class CredShedDatabaseError(CredShedError):
     pass
 
+class AlreadyInProgressError(CredShedDatabaseError):
+    pass
+
 class CredShedSourceError(CredShedError):
     pass
 

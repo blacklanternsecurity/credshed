@@ -129,9 +129,9 @@ services:" | tee -a docker-compose.yml | fgrep -v MONGO_INITDB_ROOT
     echo "
     router:
         image: mongo
-        command: mongos --keyFile /scripts/mongodb.key --port 27017 --configdb configserver/config0:27017 --setParameter taskExecutorPoolSize=0 --setParameter ShardingTaskExecutorPoolMinSize=10 --setParameter ShardingTaskExecutorPoolMaxConnecting=50 --bind_ip_all
+        command: mongos --keyFile /scripts/mongodb.key --port 27017 --configdb configserver/config0:27017 --bind_ip_all #--setParameter taskExecutorPoolSize=0 --setParameter ShardingTaskExecutorPoolMinSize=10 --setParameter ShardingTaskExecutorPoolMaxConnecting=50 
         ports:
-            - \"127.0.0.1:27017:27017\"
+            - \"172.17.0.1:27017:27017\"
         volumes:
             - ${script_dir}:/scripts
         ulimits:
@@ -141,6 +141,10 @@ services:" | tee -a docker-compose.yml | fgrep -v MONGO_INITDB_ROOT
             fsize: -1
             cpu: -1
             as: -1
+        logging:
+            options:
+                max-size: 500m
+                max-file: 3
         depends_on:
             - config0" | tee -a docker-compose.yml
     for shard in $(seq 1 $num_shards)
@@ -168,6 +172,10 @@ services:" | tee -a docker-compose.yml | fgrep -v MONGO_INITDB_ROOT
             fsize: -1
             cpu: -1
             as: -1
+        logging:
+            options:
+                max-size: 500m
+                max-file: 3
         networks:
             - mongo" | tee -a docker-compose.yml
 
@@ -193,7 +201,7 @@ services:" | tee -a docker-compose.yml | fgrep -v MONGO_INITDB_ROOT
         echo "
     shard${shard}a:
         image: mongo
-        command: mongod --keyFile /scripts/mongodb.key --port 27018 --shardsvr --replSet shard${shard} --bind_ip_all --setParameter maxIndexBuildMemoryUsageMegabytes=2000 --setParameter diagnosticDataCollectionEnabled=false --wiredTigerCacheSizeGB 2
+        command: mongod --keyFile /scripts/mongodb.key --port 27018 --shardsvr --replSet shard${shard} --bind_ip_all --setParameter diagnosticDataCollectionEnabled=false --setParameter maxIndexBuildMemoryUsageMegabytes=10000 --wiredTigerCacheSizeGB 40
         volumes:
             - ${script_dir}:/scripts
             - ${dir_name}:/data/db:delegated
@@ -204,6 +212,10 @@ services:" | tee -a docker-compose.yml | fgrep -v MONGO_INITDB_ROOT
             fsize: -1
             cpu: -1
             as: -1
+        logging:
+            options:
+                max-size: 500m
+                max-file: 3
         networks:
             - mongo" | tee -a docker-compose.yml
     done
@@ -289,6 +301,7 @@ build_mongo_scripts()
 
     # internal authentication key
     openssl rand -base64 741 | sudo tee "${script_dir}/mongodb.key"
+    sudo cp mongod.conf "${script_dir}/"
 
     build_mongo_init_scripts
     build_mongo_config_scripts
@@ -398,17 +411,6 @@ then
 fi
 
 
-# set ulimits (mongo will probably crash without these)
-# TODO: set these in docker
-sudo ulimit -f unlimited
-sudo ulimit -t unlimited
-sudo ulimit -v unlimited
-sudo ulimit -m unlimited
-sudo ulimit -l unlimited
-sudo ulimit -u 64000
-sudo ulimit -n 64000
-
-
 while :
 do
     case $1 in
@@ -503,7 +505,7 @@ fi
 if [ -n "$do_init_shards" ]
 then
     printf 'Sleeping for 60 seconds (a very long time is needed before the config server will respond)\n'
-    sleep 30
+    sleep 60
     init_shards
 fi
 

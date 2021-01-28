@@ -86,7 +86,8 @@ class TextParse():
             raise TextParseError(f'Error reading (or empty) file: {self.file}')
 
         self.input_delimiter = self._get_delimiter(all_lines)
-        log.info(f'Detected delimiter: {self.input_delimiter}')
+        detected_delimiter = self.input_delimiter.__repr__().strip("'")
+        log.info(f'Detected delimiter: {detected_delimiter}')
 
         # confirm delimiter if not unattended
         if not self.unattended:
@@ -369,6 +370,9 @@ class TextParse():
                         if len(misc) <= 2:
                             misc = ''
 
+                    # strip out other email addresses
+                    misc = validation.strip_emails(misc)
+
                     yield Account(email=email, hashes=found_hashes, misc=misc)
 
                 else:
@@ -463,7 +467,8 @@ class TextParse():
             log.warning(' ' + str(rand_choice)[2:-1])
         log.warning('=' * 60)
         sleep(.2)
-        self.input_delimiter = input(f'[-] Delimiter [{str(self.input_delimiter)[2:-1]}] > ') or self.input_delimiter
+        detected_delimiter = self.input_delimiter.__repr__().strip("'")
+        self.input_delimiter = input(f'[-] Delimiter [{detected_delimiter}] > ') or self.input_delimiter
 
         # handle case where delimiter is hexidecimal
         hex_prefixes = ['\\x', '0x']
