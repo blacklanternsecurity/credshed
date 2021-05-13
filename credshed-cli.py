@@ -63,7 +63,10 @@ class CredShedCLI(CredShed):
         start_time = datetime.now()
         num_accounts_in_db = self.db.account_count()
 
-        left = int(self.options.limit) - 1
+        if not self.options.limit == -1:
+            left = int(self.options.limit) - 1
+        else:
+            left = 0
 
         num_results = 0
         for keyword in self.options.search:
