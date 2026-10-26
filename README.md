@@ -78,3 +78,9 @@ Search for emails in every file and import into the database.  Credshed will aut
 ~~~
 $ ./credshed-cli.py --unattended --ingest /mnt/leaks
 ~~~
+
+## License
+
+Copyright (C) 2019 Black Lantern Security
+
+Licensed under the GNU Affero General Public License v3.0 or later (`AGPL-3.0-or-later`). See [LICENSE](LICENSE).
